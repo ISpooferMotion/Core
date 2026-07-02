@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-07-03
+
+### Changed
+
+- **DevTools Redesign**: Replaced the basic `DevConsole` with a comprehensive, tabbed `DevTools` widget that correctly sizes itself dynamically (35vh fixed height when expanded, docked to bottom) and provides tabs for Console, Elements, and State.
+- **Logger Extraction**: Extracted internal logging functions into a separate `logger.ts` module to prevent circular dependencies between the widget definitions and the core runtime.
+- **Global `__ISMLIB_DEVTOOLS__` Hook**: Restored the global discovery hook to its original intent for external extension support, cleanly separating it from the internal in-app `DevTools` panel logging.
+
 ## [2.1.0] - 2026-07-02
 
 ### Added

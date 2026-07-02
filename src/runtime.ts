@@ -610,7 +610,9 @@ export const mountedRuntimes = new Set<Runtime>();
 // Expose devtools hook
 if (typeof window !== "undefined") {
 	// biome-ignore lint/suspicious/noExplicitAny: DevTools hook injection
+	const existing = (window as any).__ISMLIB_DEVTOOLS__ || {};
 	(window as any).__ISMLIB_DEVTOOLS__ = {
+		...existing,
 		getRuntimes: () => mountedRuntimes,
 	};
 }

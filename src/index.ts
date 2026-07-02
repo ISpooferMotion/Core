@@ -1,5 +1,5 @@
 /**
- * @ispoofermotion/core -- Immediate-mode UI runtime for Tauri + React
+ * @ispoofermotion/core -- IMUI runtime for Tauri + React
  *
  * @packageDocumentation
  *
@@ -45,9 +45,11 @@
 
 export type { AppOptions } from "./createApp";
 export { createApp, useReactContext } from "./createApp";
-export { attachDevConsole, DevConsole, getDevLogs } from "./DevConsole";
+export { DevConsole } from "./DevConsole";
+export { DevTools } from "./DevTools";
 export { defineWidget } from "./defineWidget";
 export { ISMLibErrorBoundary } from "./ErrorBoundary";
+export { attachDevConsole, getDevLogs, pushLog } from "./logger";
 export { makeInteractive } from "./makeInteractive";
 export { extractDisplayLabel } from "./runtime";
 export type {
