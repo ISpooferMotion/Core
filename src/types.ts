@@ -24,12 +24,12 @@ export interface StorageAdapter {
  */
 export interface WidgetProps {
 	/** The widget type name, e.g. `"Button"`. Used for CSS targeting. */
-	"data-ismlib-widget": string;
+	"data-ism-widget": string;
 	/** The stable composite ID of this instance. */
-	"data-ismlib-id": string;
+	"data-ism-id": string;
 	/**
-	 * Two CSS classes: `ismlib-widget` (all widgets) and
-	 * `ismlib-{lowercasename}` (type-specific). Override styles by targeting
+	 * Two CSS classes: `ism-widget` (all widgets) and
+	 * `ism-{lowercasename}` (type-specific). Override styles by targeting
 	 * these in your CSS without touching library code.
 	 */
 	className: string;

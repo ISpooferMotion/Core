@@ -33,8 +33,8 @@ class FramePool {
 				defaultState: null,
 				persistent: false,
 				widgetProps: {
-					"data-ismlib-widget": "",
-					"data-ismlib-id": "",
+					"data-ism-widget": "",
+					"data-ism-id": "",
 					className: "",
 				},
 				renderFn: () => null,
@@ -342,7 +342,7 @@ export class Runtime {
 	popContext(key: string): void {
 		const stack = this.contextStack.get(key);
 		if (!stack || stack.length === 0) {
-			console.warn(`[ismlib] Unbalanced popContext for key '${key}'`);
+			console.warn(`[ism] Unbalanced popContext for key '${key}'`);
 			return;
 		}
 		stack.pop();
@@ -374,7 +374,7 @@ export class Runtime {
 	 */
 	popLayer(): void {
 		if (this.activeLayerStack.length <= 1) {
-			console.warn(`[ismlib] Cannot pop the default layer`);
+			console.warn(`[ism] Cannot pop the default layer`);
 			return;
 		}
 		this.activeLayerStack.pop();
@@ -609,9 +609,13 @@ export const mountedRuntimes = new Set<Runtime>();
 
 // Expose devtools hook
 if (typeof window !== "undefined") {
-	// biome-ignore lint/suspicious/noExplicitAny: DevTools hook injection
-	const existing = (window as any).__ISMLIB_DEVTOOLS__ || {};
-	(window as any).__ISMLIB_DEVTOOLS__ = {
+	const win = window as unknown as Record<string, unknown>;
+	const existing = (
+		typeof win.__ISM_DEVTOOLS__ === "object" && win.__ISM_DEVTOOLS__ !== null
+			? win.__ISM_DEVTOOLS__
+			: {}
+	) as Record<string, unknown>;
+	win.__ISM_DEVTOOLS__ = {
 		...existing,
 		getRuntimes: () => mountedRuntimes,
 	};
@@ -619,7 +623,7 @@ if (typeof window !== "undefined") {
 
 export function getActiveRuntime(): Runtime {
 	if (!activeRuntime) {
-		throw new Error("ISMLib: Cannot call widget outside of a drawing frame.");
+		throw new Error("ISMCore: Cannot call widget outside of a drawing frame.");
 	}
 	return activeRuntime;
 }

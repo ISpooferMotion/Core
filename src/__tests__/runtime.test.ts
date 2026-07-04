@@ -126,9 +126,9 @@ describe("state GC", () => {
 				defaultState: {},
 				persistent: false,
 				widgetProps: {
-					"data-ismlib-widget": "Button",
-					"data-ismlib-id": id,
-					className: "ismlib-widget ismlib-button",
+					"data-ism-widget": "Button",
+					"data-ism-id": id,
+					className: "ism-widget ism-button",
 				},
 				renderFn: () => null,
 			});
@@ -178,9 +178,9 @@ describe("state GC", () => {
 						defaultState: {},
 						persistent: false,
 						widgetProps: {
-							"data-ismlib-widget": "Button",
-							"data-ismlib-id": id,
-							className: "ismlib-widget ismlib-button",
+							"data-ism-widget": "Button",
+							"data-ism-id": id,
+							className: "ism-widget ism-button",
 						},
 						renderFn: () => null,
 					});
@@ -218,9 +218,9 @@ describe("scope management", () => {
 				defaultState: {},
 				persistent: false,
 				widgetProps: {
-					"data-ismlib-widget": "Panel",
-					"data-ismlib-id": parentId,
-					className: "ismlib-widget ismlib-panel",
+					"data-ism-widget": "Panel",
+					"data-ism-id": parentId,
+					className: "ism-widget ism-panel",
 				},
 				renderFn: () => null,
 			};
@@ -237,9 +237,9 @@ describe("scope management", () => {
 				defaultState: {},
 				persistent: false,
 				widgetProps: {
-					"data-ismlib-widget": "Button",
-					"data-ismlib-id": childId,
-					className: "ismlib-widget ismlib-button",
+					"data-ism-widget": "Button",
+					"data-ism-id": childId,
+					className: "ism-widget ism-button",
 				},
 				renderFn: () => null,
 			});

@@ -1,4 +1,4 @@
-const PREFIX = "[ismlib]";
+const PREFIX = "[ism]";
 
 /**
  * Widget called outside of a draw function.

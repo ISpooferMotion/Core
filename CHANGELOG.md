@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-07-04
+
+### Changed
+
+- **Standardized Naming (`ismlib` -> `ism`)**: Complete migration away from legacy `ismlib` naming conventions across the library.
+  - DOM Data attributes updated: `data-ismlib-widget` -> `data-ism-widget`, `data-ismlib-id` -> `data-ism-id`, `data-ismlib-root` -> `data-ism-root`, `data-ismlib-error` -> `data-ism-error`, `data-ismlib-layer` -> `data-ism-layer`.
+  - CSS class hooks updated: `.ismlib-widget` -> `.ism-widget`, `.ismlib-{name}` -> `.ism-{name}`.
+  - Design tokens updated: `--ismlib-*` -> `--ism-*`.
+  - Logging prefix updated from `[ismlib]` to `[ism]`.
+  - Global DevTools discovery hook updated from `window.__ISMLIB_DEVTOOLS__` to `window.__ISM_DEVTOOLS__`.
+  - Core components renamed from `ISMLib` / `ISMLibApp` to `ISMCore` / `ISMCoreApp`. Renamed `ISMLibErrorBoundary` to `ISMCoreErrorBoundary` (retaining `ISMLibErrorBoundary` as an export alias for backwards compatibility).
+- **OKLCH Color System**: Upgraded default design system baseline in `styles.css` to use modern OKLCH color palettes with automatic `--background`, `--foreground`, and semantic token mappings for Light and Dark modes.
+
 ## [2.2.0] - 2026-07-03
 
 ### Changed

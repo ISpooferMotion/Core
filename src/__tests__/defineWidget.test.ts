@@ -24,7 +24,7 @@ describe("defineWidget name validation", () => {
 				render: () => null,
 				getReturnValue: () => undefined,
 			}),
-		).toThrow("[ismlib]");
+		).toThrow("[ism]");
 	});
 
 	it("throws for a name containing '/'", () => {
@@ -35,7 +35,7 @@ describe("defineWidget name validation", () => {
 				render: () => null,
 				getReturnValue: () => undefined,
 			}),
-		).toThrow("[ismlib]");
+		).toThrow("[ism]");
 	});
 
 	it("throws for a name containing '#'", () => {
@@ -46,7 +46,7 @@ describe("defineWidget name validation", () => {
 				render: () => null,
 				getReturnValue: () => undefined,
 			}),
-		).toThrow("[ismlib]");
+		).toThrow("[ism]");
 	});
 
 	it("throws for a name containing whitespace", () => {
@@ -57,7 +57,7 @@ describe("defineWidget name validation", () => {
 				render: () => null,
 				getReturnValue: () => undefined,
 			}),
-		).toThrow("[ismlib]");
+		).toThrow("[ism]");
 	});
 
 	it("throws when defaultState is a function", () => {
@@ -68,7 +68,7 @@ describe("defineWidget name validation", () => {
 				render: () => null,
 				getReturnValue: () => undefined,
 			}),
-		).toThrow("[ismlib]");
+		).toThrow("[ism]");
 	});
 
 	it("accepts a valid name", () => {
@@ -220,7 +220,7 @@ describe("loop widgets with changing counts", () => {
 /// widgetProps injection \\\
 
 describe("widgetProps", () => {
-	it("injects data-ismlib-widget and class names", () => {
+	it("injects data-ism-widget and class names", () => {
 		runtime.registerApp(() => {});
 		let capturedProps: unknown;
 
@@ -251,8 +251,8 @@ describe("widgetProps", () => {
 		});
 
 		expect(capturedProps).toMatchObject({
-			"data-ismlib-widget": "TestWidget",
-			className: expect.stringContaining("ismlib-testwidget"),
+			"data-ism-widget": "TestWidget",
+			className: expect.stringContaining("ism-testwidget"),
 		});
 	});
 

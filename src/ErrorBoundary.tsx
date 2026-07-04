@@ -25,16 +25,16 @@ interface State {
  *
  * @example
  * ```tsx
- * import { ISMLibErrorBoundary } from "@ispoofermotion/core";
+ * import { ISMCoreErrorBoundary } from "@ispoofermotion/core";
  *
  * createRoot(root).render(
- *   createElement(ISMLibErrorBoundary, { onError: (e) => reportError(e) },
+ *   createElement(ISMCoreErrorBoundary, { onError: (e) => reportError(e) },
  *     createElement(App)
  *   )
  * );
  * ```
  */
-export class ISMLibErrorBoundary extends Component<Props, State> {
+export class ISMCoreErrorBoundary extends Component<Props, State> {
 	constructor(props: Props) {
 		super(props);
 		this.state = { error: null };
@@ -46,7 +46,7 @@ export class ISMLibErrorBoundary extends Component<Props, State> {
 
 	componentDidCatch(error: Error, info: ErrorInfo): void {
 		this.props.onError?.(error, info);
-		console.error("[ismlib] Uncaught error in widget render:", error, info);
+		console.error("[ism] Uncaught error in widget render:", error, info);
 	}
 
 	render(): ReactNode {
@@ -54,7 +54,7 @@ export class ISMLibErrorBoundary extends Component<Props, State> {
 			return createElement(
 				"div",
 				{
-					"data-ismlib-error": "",
+					"data-ism-error": "",
 					style: {
 						display: "flex",
 						flexDirection: "column",
@@ -73,7 +73,7 @@ export class ISMLibErrorBoundary extends Component<Props, State> {
 				createElement(
 					"strong",
 					{ style: { marginBottom: "8px", fontSize: "14px" } },
-					"[ismlib] Widget render error",
+					"[ism] Widget render error",
 				),
 				createElement(
 					"pre",
@@ -91,3 +91,8 @@ export class ISMLibErrorBoundary extends Component<Props, State> {
 		return this.props.children;
 	}
 }
+
+/**
+ * @deprecated Since 3.0.0. Use `ISMCoreErrorBoundary` instead.
+ */
+export { ISMCoreErrorBoundary as ISMLibErrorBoundary };

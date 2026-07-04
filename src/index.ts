@@ -48,7 +48,7 @@ export { createApp, useReactContext } from "./createApp";
 export { DevConsole } from "./DevConsole";
 export { DevTools } from "./DevTools";
 export { defineWidget } from "./defineWidget";
-export { ISMLibErrorBoundary } from "./ErrorBoundary";
+export { ISMCoreErrorBoundary, ISMLibErrorBoundary } from "./ErrorBoundary";
 export { attachDevConsole, getDevLogs, pushLog } from "./logger";
 export { makeInteractive } from "./makeInteractive";
 export { extractDisplayLabel } from "./runtime";

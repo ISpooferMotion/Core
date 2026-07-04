@@ -41,9 +41,9 @@ function buildWidgetProps<A extends unknown[]>(
 ): WidgetProps {
 	const slug = widgetName.toLowerCase();
 	const props: WidgetProps = {
-		"data-ismlib-widget": widgetName,
-		"data-ismlib-id": id,
-		className: `ismlib-widget ismlib-${slug}`,
+		"data-ism-widget": widgetName,
+		"data-ism-id": id,
+		className: `ism-widget ism-${slug}`,
 	};
 
 	if (a11y) {
@@ -56,7 +56,7 @@ function buildWidgetProps<A extends unknown[]>(
 			// Store description text in a data attribute so makeInteractive can
 			// wire up aria-describedby with a real DOM element if needed.
 			// Widget authors who want full describedby support should use makeInteractive().
-			props["aria-describedby"] = `ismlib-desc-${id}`;
+			props["aria-describedby"] = `ism-desc-${id}`;
 		}
 	}
 

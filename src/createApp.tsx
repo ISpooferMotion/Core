@@ -7,7 +7,7 @@ import {
 	useMemo,
 	useReducer,
 } from "react";
-import { ISMLibErrorBoundary } from "./ErrorBoundary";
+import { ISMCoreErrorBoundary } from "./ErrorBoundary";
 import { Runtime, setActiveRuntime } from "./runtime";
 import type { FrameEntry, StorageAdapter } from "./types";
 
@@ -73,7 +73,7 @@ function renderFrameBuffer(
 				"div",
 				{
 					key: `layer-${layerName}`,
-					"data-ismlib-layer": layerName,
+					"data-ism-layer": layerName,
 					style:
 						layerName === "default"
 							? undefined
@@ -112,7 +112,7 @@ export function useReactContext<T>(context: React.Context<T>): T {
  * Create the root React component for an immediate-mode app.
  *
  * Takes a draw function that describes the entire UI through widget calls.
- * Returns a standard `React.FC` wrapped in an `ISMLibErrorBoundary` that
+ * Returns a standard `React.FC` wrapped in an `ISMCoreErrorBoundary` that
  * shows a friendly message instead of a blank screen on error.
  *
  * The returned component:
@@ -150,7 +150,7 @@ export interface AppOptions {
 }
 
 export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
-	function ISMLib() {
+	function ISMCore() {
 		// Create a unique runtime instance for this app root
 		const runtime = useMemo(() => new Runtime(options?.storage), []);
 
@@ -208,19 +208,19 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 		const frameBuffer = runtime.getFrameBuffer();
 		return createElement(
 			"div",
-			{ "data-ismlib-root": "" },
+			{ "data-ism-root": "" },
 			renderFrameBuffer(runtime, frameBuffer),
 		);
 	}
 
-	ISMLib.displayName = "ISMLib";
+	ISMCore.displayName = "ISMCore";
 
 	// Wrap in an error boundary so uncaught errors from widget render functions
 	// show a friendly message instead of a blank screen.
-	function ISMLibApp() {
-		return createElement(ISMLibErrorBoundary, null, createElement(ISMLib));
+	function ISMCoreApp() {
+		return createElement(ISMCoreErrorBoundary, null, createElement(ISMCore));
 	}
-	ISMLibApp.displayName = "ISMLibApp";
+	ISMCoreApp.displayName = "ISMCoreApp";
 
-	return ISMLibApp;
+	return ISMCoreApp;
 }
