@@ -1,4 +1,4 @@
-# Contributing to ism-lib
+# Contributing to ispoofermotion/core
 
 Thank you for investing your time in contributing to our project!
 
