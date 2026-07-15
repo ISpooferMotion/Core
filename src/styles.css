@@ -1,124 +1,13 @@
 /**
  * CSS baseline for @ispoofermotion/core.
  *
- * Import this once in your app's entry point to get sensible defaults
- * for all ism widgets. Every setting uses CSS custom properties, so
- * overriding the design system never requires touching library code.
- *
- * @example
- * ```ts
- * // In your entry point (main.tsx, index.ts, etc.)
- * import "@ispoofermotion/core/styles.css";
- * ```
- *
- * Override the design tokens in your own CSS:
- * ```css
- * :root {
- *   --ism-color-accent: hotpink;
- *   --ism-radius: 8px;
- * }
- * ```
- *
- * Target specific widget types with the predictable class names:
- * ```css
- * .ism-button { font-weight: bold; }
- * .ism-slider { width: 200px; }
- * ```
+ * The core engine is presentation-agnostic. These styles only provide
+ * the minimal structural requirements for the immediate-mode runtime.
  */
-
-:root {
-	--radius: 0.5rem;
-	--background: oklch(0.989 0.004 281.227);
-	--foreground: oklch(0.076 0.017 274.098);
-	--muted: oklch(0.903 0.005 281.193);
-	--muted-foreground: oklch(0.447 0.01 280.913);
-	--popover: oklch(0.989 0.004 281.227);
-	--popover-foreground: oklch(0.076 0.017 274.098);
-	--card: oklch(0.979 0.007 281.166);
-	--card-foreground: oklch(0 0 0);
-	--border: oklch(0.926 0.006 281.18);
-	--input: oklch(0.926 0.006 281.18);
-	--primary: oklch(0.571 0.157 275.517);
-	--primary-foreground: oklch(1 0 180);
-	--secondary: oklch(0.938 0.001 281.262);
-	--secondary-foreground: oklch(0.431 0.007 281.013);
-	--accent: oklch(0.883 0.011 281.076);
-	--accent-foreground: oklch(0.359 0.027 279.973);
-	--destructive: oklch(0.483 0.194 29.46);
-	--destructive-foreground: oklch(0.988 0.006 19.688);
-	--ring: oklch(0.571 0.157 275.517);
-	--chart-1: oklch(0.571 0.157 275.517);
-	--chart-2: oklch(0.938 0.001 281.262);
-	--chart-3: oklch(0.883 0.011 281.076);
-	--chart-4: oklch(0.961 0.001 281.272);
-	--chart-5: oklch(0.567 0.165 275.083);
-
-	/* Color tokens */
-	--ism-color-bg: var(--background);
-	--ism-color-bg-hover: var(--accent);
-	--ism-color-bg-active: var(--secondary);
-	--ism-color-text: var(--foreground);
-	--ism-color-text-muted: var(--muted-foreground);
-	--ism-color-accent: var(--primary);
-	--ism-color-accent-text: var(--primary-foreground);
-	--ism-color-border: var(--border);
-	--ism-color-error: var(--destructive);
-	--ism-color-success: #51cf66;
-
-	/* Layout tokens */
-	--ism-radius: var(--radius);
-	--ism-radius-lg: calc(var(--radius) + 4px);
-	--ism-spacing: 4px;
-	--ism-spacing-md: 8px;
-	--ism-spacing-lg: 16px;
-
-	/* Typography tokens */
-	--ism-font-family: inherit;
-	--ism-font-size: 13px;
-	--ism-font-size-sm: 11px;
-	--ism-line-height: 1.4;
-
-	/* Animation tokens */
-	--ism-duration-fast: 100ms;
-	--ism-duration-normal: 200ms;
-	--ism-easing: ease;
-}
-
-.dark {
-	--radius: 0.5rem;
-	--background: oklch(0.14 0 180);
-	--foreground: oklch(1 0 180);
-	--muted: oklch(0.205 0.007 280.675);
-	--muted-foreground: oklch(0.725 0.009 281.085);
-	--popover: oklch(0.164 0 170.538);
-	--popover-foreground: oklch(1 0 180);
-	--card: oklch(0.161 0.001 286.315);
-	--card-foreground: oklch(1 0 180);
-	--border: oklch(0.278 0.009 276.777);
-	--input: oklch(0.226 0.015 280.101);
-	--primary: oklch(0.571 0.157 275.517);
-	--primary-foreground: oklch(1 0 180);
-	--secondary: oklch(0.245 0.01 276.688);
-	--secondary-foreground: oklch(0.941 0.021 280.914);
-	--accent: oklch(0.216 0.01 280.493);
-	--accent-foreground: oklch(0.944 0.027 280.808);
-	--destructive: oklch(0.635 0.233 28.281);
-	--destructive-foreground: oklch(1 0 180);
-	--ring: oklch(0.571 0.157 275.517);
-	--chart-1: oklch(0.571 0.157 275.517);
-	--chart-2: oklch(0.213 0.017 279.886);
-	--chart-3: oklch(0.253 0.035 278.722);
-	--chart-4: oklch(0.242 0.021 279.758);
-	--chart-5: oklch(0.567 0.165 275.083);
-}
 
 /* Applied to every ism widget root element */
 .ism-widget {
 	box-sizing: border-box;
-	font-family: var(--ism-font-family);
-	font-size: var(--ism-font-size);
-	line-height: var(--ism-line-height);
-	color: var(--ism-color-text);
 }
 
 /* Root container created by createApp() */
