@@ -24,6 +24,9 @@
 			"style": {
 				"useConst": "error",
 				"noNonNullAssertion": "error"
+			},
+			"suspicious": {
+				"noExplicitAny": "error"
 			}
 		}
 	},

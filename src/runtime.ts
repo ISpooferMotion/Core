@@ -75,6 +75,9 @@ export class Runtime {
 	/** ID stack for pushId/popId scoping */
 	private idStack: string[] = [];
 
+	/** Cached string prefix derived from idStack to avoid .join("/") on every widget call */
+	private idPrefix = "";
+
 	/** Per-frame collision counter: how many times each raw ID has appeared */
 	private collisionCounter = new Map<string, number>();
 
@@ -171,6 +174,7 @@ export class Runtime {
 		this.duplicateWarned.clear();
 		this.scopeStack.length = 0;
 		this.idStack.length = 0;
+		this.idPrefix = "";
 		this.contextStack.clear();
 		this.dirty = false;
 	}
@@ -302,9 +306,7 @@ export class Runtime {
 		}
 
 		// Compose: stack/WidgetName/idPart
-		const stackPrefix =
-			this.idStack.length > 0 ? `${this.idStack.join("/")}/` : "";
-		const rawId = `${stackPrefix}${widgetName}/${idPart}`;
+		const rawId = `${this.idPrefix}${widgetName}/${idPart}`;
 
 		// Collision detection and auto-disambiguation
 		const count = this.collisionCounter.get(rawId) ?? 0;
@@ -342,7 +344,7 @@ export class Runtime {
 	popContext(key: string): void {
 		const stack = this.contextStack.get(key);
 		if (!stack || stack.length === 0) {
-			console.warn(`[ism] Unbalanced popContext for key '${key}'`);
+			console.warn(errors.unbalancedPopContext(key));
 			return;
 		}
 		stack.pop();
@@ -374,7 +376,7 @@ export class Runtime {
 	 */
 	popLayer(): void {
 		if (this.activeLayerStack.length <= 1) {
-			console.warn(`[ism] Cannot pop the default layer`);
+			console.warn(errors.popDefaultLayer());
 			return;
 		}
 		this.activeLayerStack.pop();
@@ -395,6 +397,18 @@ export class Runtime {
 
 	setMemo(id: string, deps: unknown[], subtree: FrameEntry[]): void {
 		this.memoCache.set(id, { deps, subtree });
+	}
+
+	/**
+	 * Build a stable cache key for a memoBlock.
+	 *
+	 * Uses the current ID stack as a namespace prefix but bypasses
+	 * `buildId` and the collision counter entirely. Memo blocks are
+	 * not widgets and must not participate in duplicate-ID detection
+	 * or conflict with a user widget named "MemoBlock".
+	 */
+	buildMemoKey(id: string): string {
+		return `${this.idPrefix}__memo__/${id}`;
 	}
 
 	/**
@@ -510,6 +524,7 @@ export class Runtime {
 	 */
 	pushIdSegment(id: string): void {
 		this.idStack.push(id);
+		this.idPrefix = `${this.idStack.join("/")}/`;
 	}
 
 	/**
@@ -521,6 +536,7 @@ export class Runtime {
 			return;
 		}
 		this.idStack.pop();
+		this.idPrefix = this.idStack.length > 0 ? `${this.idStack.join("/")}/` : "";
 	}
 
 	/// Scheduling \\\
@@ -623,11 +639,31 @@ if (typeof window !== "undefined") {
 
 export function getActiveRuntime(): Runtime {
 	if (!activeRuntime) {
-		throw new Error("ISMCore: Cannot call widget outside of a drawing frame.");
+		throw new Error(errors.noActiveRuntime());
 	}
 	return activeRuntime;
 }
 
 export function setActiveRuntime(runtime: Runtime | null): void {
 	activeRuntime = runtime;
+}
+
+/**
+ * Execute `fn` with `runtime` as the active context, then restore
+ * the previous active runtime.
+ *
+ * This is safe for nested calls (e.g., memoBlock's captureSubtree
+ * invoking widget code): the previous runtime is always restored,
+ * even if `fn` throws.
+ *
+ * @internal. Used by createApp only.
+ */
+export function withRuntime<T>(runtime: Runtime, fn: () => T): T {
+	const prev = activeRuntime;
+	activeRuntime = runtime;
+	try {
+		return fn();
+	} finally {
+		activeRuntime = prev;
+	}
 }

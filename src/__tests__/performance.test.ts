@@ -54,7 +54,7 @@ describe("500-widget performance budget", () => {
 
 		const start = performance.now();
 
-		// Frame 2: empty — GC prunes all 500 orphans
+		// Frame 2: empty; GC prunes all 500 orphans
 		runtime.beginFrame();
 		runtime.endFrame();
 

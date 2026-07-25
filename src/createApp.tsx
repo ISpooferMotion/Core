@@ -8,7 +8,7 @@ import {
 	useReducer,
 } from "react";
 import { ISMCoreErrorBoundary } from "./ErrorBoundary";
-import { Runtime, setActiveRuntime } from "./runtime";
+import { Runtime, withRuntime } from "./runtime";
 import type { FrameEntry, StorageAdapter } from "./types";
 
 /**
@@ -60,6 +60,7 @@ function renderEntry(runtime: Runtime, entry: FrameEntry): ReactNode {
 function renderFrameBuffer(
 	runtime: Runtime,
 	layers: Map<string, FrameEntry[]>,
+	layerZIndex: number,
 ): ReactNode {
 	if (layers.size === 0) return null;
 
@@ -84,7 +85,7 @@ function renderFrameBuffer(
 									width: "100%",
 									height: "100%",
 									pointerEvents: "none",
-									zIndex: 100, // Hardcoded for now, could be dynamic
+									zIndex: layerZIndex,
 								},
 				},
 				...entries.map((entry) =>
@@ -147,6 +148,11 @@ export function useReactContext<T>(context: React.Context<T>): T {
  */
 export interface AppOptions {
 	storage?: StorageAdapter;
+	/**
+	 * Base z-index applied to non-default layers (modals, tooltips, etc.).
+	 * Defaults to 100.
+	 */
+	layerZIndex?: number;
 }
 
 export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
@@ -173,18 +179,21 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 			runtime.consumeTransientState();
 		});
 
-		// Run the draw pass: describe this frame as pure data
+		// Run the draw pass: describe this frame as pure data.
+		// withRuntime restores the previous active runtime on exit,
+		// even if drawFn or endFrame throws; prevents a leaked global.
 		let drawError: string | null = null;
 
-		setActiveRuntime(runtime);
-		runtime.beginFrame();
-		try {
-			drawFn();
-		} catch (err: unknown) {
-			drawError = err instanceof Error ? err.message : String(err);
-		}
-		runtime.endFrame();
-		setActiveRuntime(null);
+		withRuntime(runtime, () => {
+			runtime.beginFrame();
+			try {
+				drawFn();
+			} catch (err: unknown) {
+				drawError =
+					err instanceof Error ? (err.stack ?? err.message) : String(err);
+			}
+			runtime.endFrame();
+		});
 
 		// If the draw function threw, show a friendly error
 		if (drawError) {
@@ -206,10 +215,11 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 
 		// Convert frame buffer to React elements
 		const frameBuffer = runtime.getFrameBuffer();
+		const zIndex = options?.layerZIndex ?? 100;
 		return createElement(
 			"div",
 			{ "data-ism-root": "" },
-			renderFrameBuffer(runtime, frameBuffer),
+			renderFrameBuffer(runtime, frameBuffer, zIndex),
 		);
 	}
 

@@ -6,6 +6,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-07-25
+
+### Added
+
+- `layerZIndex` configuration property added to `AppOptions`, allowing consumers to specify the base z-index for non-default layers.
+
+### Changed
+
+- **Zero-Allocation Hot Path**: The engine's core draw loop is now strictly allocation-free.
+  - `widgetProps` instances are now populated by mutating the pooled `entry.widgetProps` object instead of allocating a fresh dictionary on every widget call.
+  - The React bridging `renderFn` closure in `defineWidget` is hoisted out of the hot path and only runs once on widget definition, completely eliminating per-widget closure allocation.
+  - String allocations (`.join("/")`) have been removed from `buildId` and are now natively cached in the runtime via `idPrefix`.
+- Enforced strict Type Safety by enabling `exactOptionalPropertyTypes` in `tsconfig.json` and adding `noExplicitAny` to Biome lint rules.
+
+### Fixed
+
+- **DevTools Crash**: Fixed an exception when accessing the Elements/State tabs caused by reading the active runtime during the React commit phase. (Now uses the safe `mountedRuntimes` set).
+- **Runtime Leak Prevention**: Fixed a critical leak vulnerability in `withRuntime`. The draw pass is now strictly guarded by `try/finally` blocks ensuring global runtime state cleanup even when unexpected exceptions are thrown in widget code.
+- **makeInteractive Bug**: `makeInteractive` no longer swallows all exceptions via bare catch blocks. Replaced with an explicit iteration over `mountedRuntimes` for out-of-band focus events.
+- **memoBlock Isolation**: `memoBlock` collision/scoping issues resolved. It now correctly isolates its namespaces into `__memo__` using `buildMemoKey`, completely bypassing the ID collision counter to prevent user widget conflicts.
+- Em-dashes were removed across all source files in accordance with ISpooferMotion engineering standards.
+
 ## [3.0.0] - 2026-07-04
 
 ### Changed

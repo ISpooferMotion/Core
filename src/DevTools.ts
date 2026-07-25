@@ -1,13 +1,31 @@
 import { createElement } from "react";
 import { defineWidget } from "./defineWidget";
-import { devLogs } from "./logger";
-import { getActiveRuntime } from "./runtime";
+import { getDevLogs } from "./logger";
+import { mountedRuntimes } from "./runtime";
+import type { FrameEntry } from "./types";
 
 type Tab = "Console" | "Elements" | "State";
 
 interface DevToolsState {
 	expanded: boolean;
 	activeTab: Tab;
+}
+
+/**
+ * Serializes a widget subtree to an indented text representation.
+ * Used by the Elements tab to display the live widget tree.
+ */
+function serializeWidgetTree(entries: FrameEntry[], depth = 0): string {
+	const indent = "  ".repeat(depth);
+	return entries
+		.map((e) => {
+			const children =
+				e.children.length > 0
+					? `\n${serializeWidgetTree(e.children, depth + 1)}`
+					: "";
+			return `${indent}${e.widgetName} (${e.id})${children}`;
+		})
+		.join("\n");
 }
 
 /**
@@ -41,9 +59,34 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 						boxShadow: "0 2px 10px rgba(0,0,0,0.5)",
 					},
 				},
-				`🛠 DevTools (Logs: ${devLogs.length})`,
+				`🛠 DevTools (Logs: ${getDevLogs().length})`,
 			);
 		}
+
+		// Snapshot live data from all mounted runtimes.
+		// mountedRuntimes is safe to read outside of a draw pass.
+		const elementsText = Array.from(mountedRuntimes)
+			.flatMap((r) =>
+				Array.from(r.getTree().entries()).map(
+					([layer, entries]) =>
+						`[layer: ${layer}]\n${serializeWidgetTree(entries) || "  (empty)"}`,
+				),
+			)
+			.join("\n\n");
+
+		const stateEntries = Array.from(mountedRuntimes).flatMap((r) =>
+			Array.from(r.getStateStore().entries()).map(([entryId, s]) => {
+				let serialized: string;
+				try {
+					serialized = JSON.stringify(s, null, 2);
+				} catch {
+					serialized = String(s);
+				}
+				return `${entryId}:\n${serialized}`;
+			}),
+		);
+		const stateText =
+			stateEntries.length > 0 ? stateEntries.join("\n---\n") : "(empty)";
 
 		// Rendering the expanded devtools dock
 		return createElement(
@@ -149,7 +192,7 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 								if (el) el.scrollTop = el.scrollHeight;
 							},
 						},
-						devLogs.length === 0
+						getDevLogs().length === 0
 							? createElement(
 									"div",
 									{
@@ -160,7 +203,7 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 									},
 									"No logs yet",
 								)
-							: devLogs.map((log, i) =>
+							: getDevLogs().map((log, i) =>
 									createElement(
 										"div",
 										{
@@ -178,30 +221,20 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 					createElement(
 						"div",
 						{ style: { overflowY: "auto", height: "100%" } },
-						createElement("h3", null, "Widget Tree (Placeholder)"),
 						createElement(
 							"pre",
-							{ style: { color: "#51cf66" } },
-							JSON.stringify(
-								Array.from(getActiveRuntime().getTree().keys()),
-								null,
-								2,
-							),
+							{ style: { color: "#51cf66", margin: 0 } },
+							elementsText || "(no widgets rendered)",
 						),
 					),
 				state.activeTab === "State" &&
 					createElement(
 						"div",
 						{ style: { overflowY: "auto", height: "100%" } },
-						createElement("h3", null, "State Store (Placeholder)"),
 						createElement(
 							"pre",
-							{ style: { color: "#ff6b6b" } },
-							JSON.stringify(
-								Array.from(getActiveRuntime().getStateStore().keys()),
-								null,
-								2,
-							),
+							{ style: { color: "#ff6b6b", margin: 0 } },
+							stateText,
 						),
 					),
 			),

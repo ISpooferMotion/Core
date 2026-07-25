@@ -1,4 +1,4 @@
-import { getActiveRuntime } from "./runtime";
+import { mountedRuntimes } from "./runtime";
 
 /**
  * `makeInteractive` -- accessibility helper for widget authors.
@@ -31,6 +31,13 @@ import { getActiveRuntime } from "./runtime";
  * }
  * ```
  */
+
+/**
+ * Default activation keys cached at module load time.
+ * Re-using this set avoids a new Set allocation per makeInteractive call per frame.
+ */
+const DEFAULT_ACTIVATION_KEYS = new Set(["Enter", " "]);
+
 export function makeInteractive(
 	onClick: () => void,
 	options: {
@@ -59,7 +66,11 @@ export function makeInteractive(
 } {
 	const { tabIndex = 0, extraKeys = [], disabled = false, id } = options;
 
-	const activationKeys = new Set(["Enter", " ", ...extraKeys]);
+	// Reuse the cached default set when no extra keys are provided.
+	const activationKeys =
+		extraKeys.length > 0
+			? new Set(["Enter", " ", ...extraKeys])
+			: DEFAULT_ACTIVATION_KEYS;
 
 	const handleKeyDown = (e: KeyboardEvent) => {
 		if (disabled) return;
@@ -69,30 +80,32 @@ export function makeInteractive(
 		}
 	};
 
+	// Use mountedRuntimes directly instead of getActiveRuntime() to avoid
+	// throwing when focus events fire outside of a draw pass (which is normal).
 	const handleFocus = id
 		? () => {
-				try {
-					const runtime = getActiveRuntime();
-					if (runtime) runtime.setFocus(id);
-				} catch {}
+				for (const runtime of mountedRuntimes) {
+					runtime.setFocus(id);
+				}
 			}
 		: undefined;
 
 	const handleBlur = id
 		? () => {
-				try {
-					const runtime = getActiveRuntime();
-					if (runtime?.isFocused(id)) runtime.setFocus(null);
-				} catch {}
+				for (const runtime of mountedRuntimes) {
+					if (runtime.isFocused(id)) runtime.setFocus(null);
+				}
 			}
 		: undefined;
 
+	// Use conditional spreading so optional properties are absent (not undefined)
+	// when they have no value. This satisfies exactOptionalPropertyTypes.
 	return {
 		tabIndex: disabled ? -1 : tabIndex,
 		onKeyDown: handleKeyDown,
 		onClick: disabled ? () => {} : onClick,
-		onFocus: handleFocus,
-		onBlur: handleBlur,
+		...(handleFocus !== undefined ? { onFocus: handleFocus } : {}),
+		...(handleBlur !== undefined ? { onBlur: handleBlur } : {}),
 		...(disabled ? { "aria-disabled": true } : {}),
 	};
 }

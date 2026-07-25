@@ -33,34 +33,39 @@ function validateDefaultState<S>(name: string, defaultState: S): void {
 
 /// widgetProps factory \\\
 
-function buildWidgetProps<A extends unknown[]>(
+function populateWidgetProps<A extends unknown[]>(
+	props: WidgetProps,
 	widgetName: string,
+	slug: string,
 	id: string,
 	a11y: WidgetA11y<A> | undefined,
 	args: A,
-): WidgetProps {
-	const slug = widgetName.toLowerCase();
-	const props: WidgetProps = {
-		"data-ism-widget": widgetName,
-		"data-ism-id": id,
-		className: `ism-widget ism-${slug}`,
-	};
+): void {
+	props["data-ism-widget"] = widgetName;
+	props["data-ism-id"] = id;
+	props.className = `ism-widget ism-${slug}`;
 
-	if (a11y) {
-		if (a11y.role) props.role = a11y.role;
-		if (a11y.label) {
-			props["aria-label"] =
-				typeof a11y.label === "function" ? a11y.label(args) : a11y.label;
-		}
-		if (a11y.description) {
-			// Store description text in a data attribute so makeInteractive can
-			// wire up aria-describedby with a real DOM element if needed.
-			// Widget authors who want full describedby support should use makeInteractive().
-			props["aria-describedby"] = `ism-desc-${id}`;
-		}
+	if (a11y?.role) {
+		props.role = a11y.role;
+	} else {
+		delete props.role;
 	}
 
-	return props;
+	if (a11y?.label) {
+		props["aria-label"] =
+			typeof a11y.label === "function" ? a11y.label(args) : a11y.label;
+	} else {
+		delete props["aria-label"];
+	}
+
+	if (a11y?.description) {
+		// Store description text in a data attribute so makeInteractive can
+		// wire up aria-describedby with a real DOM element if needed.
+		// Widget authors who want full describedby support should use makeInteractive().
+		props["aria-describedby"] = `ism-desc-${id}`;
+	} else {
+		delete props["aria-describedby"];
+	}
 }
 
 /**
@@ -137,6 +142,33 @@ export function defineWidget<S, A extends unknown[], R>(
 		? (state: unknown): unknown => consumeState(state as S)
 		: undefined;
 
+	const slug = name.toLowerCase();
+
+	// Build the render closure that bridges from type-erased FrameRenderProps
+	// to the fully-typed WidgetRenderProps.
+	// HOISTED: Created once per widget definition, not per widget call!
+	const renderFn = (props: {
+		id: string;
+		state: unknown;
+		setState: (updater: unknown) => void;
+		args: unknown[];
+		children: import("react").ReactNode | null;
+		widgetProps: WidgetProps;
+	}) => {
+		const typedSetState = (updater: S | ((prev: S) => S)) => {
+			props.setState(updater);
+		};
+
+		return render({
+			id: props.id,
+			state: props.state as S,
+			setState: typedSetState,
+			args: props.args as unknown as A,
+			children: props.children,
+			widgetProps: props.widgetProps,
+		} satisfies WidgetRenderProps<S, A>);
+	};
+
 	// Return the callable widget function
 	return (...args: A): R => {
 		const runtime = getActiveRuntime();
@@ -154,33 +186,6 @@ export function defineWidget<S, A extends unknown[], R>(
 		// Look up or initialize persistent state
 		const state = runtime.getState<S>(id, defaultState);
 
-		// Build widgetProps (computed once per frame per instance)
-		const widgetProps = buildWidgetProps<A>(name, id, a11y, args);
-
-		// Build the render closure that bridges from type-erased FrameRenderProps
-		// to the fully-typed WidgetRenderProps.
-		const renderFn = (props: {
-			id: string;
-			state: unknown;
-			setState: (updater: unknown) => void;
-			args: unknown[];
-			children: import("react").ReactNode | null;
-			widgetProps: WidgetProps;
-		}) => {
-			const typedSetState = (updater: S | ((prev: S) => S)) => {
-				props.setState(updater);
-			};
-
-			return render({
-				id: props.id,
-				state: props.state as S,
-				setState: typedSetState,
-				args: props.args as unknown as A,
-				children: props.children,
-				widgetProps: props.widgetProps,
-			} satisfies WidgetRenderProps<S, A>);
-		};
-
 		// Acquire frame entry from the zero-allocation pool
 		const entry = runtime.acquireFrameEntry();
 		entry.id = id;
@@ -189,9 +194,18 @@ export function defineWidget<S, A extends unknown[], R>(
 		entry.scoped = scoped;
 		entry.defaultState = defaultState;
 		entry.persistent = config.persistent ?? false;
-		entry.widgetProps = widgetProps;
+
+		// Mutate the pooled widgetProps object (zero-allocation)
+		populateWidgetProps(entry.widgetProps, name, slug, id, a11y, args);
+
 		entry.renderFn = renderFn;
-		entry.consumeStateFn = consumeStateFn;
+		if (consumeStateFn !== undefined) {
+			entry.consumeStateFn = consumeStateFn;
+		} else {
+			// Reset to undefined in case this pool slot was previously used by
+			// a widget that did have consumeState.
+			delete entry.consumeStateFn;
+		}
 
 		// Register in the current parent's children (scope-aware)
 		runtime.getCurrentParentChildren().push(entry);

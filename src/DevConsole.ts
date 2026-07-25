@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { defineWidget } from "./defineWidget";
-import { devLogs } from "./logger";
+import { getDevLogs } from "./logger";
 
 /**
  * A widget that displays the captured terminal logs.
@@ -44,7 +44,7 @@ export const DevConsole = defineWidget<void, [], void>({
 						if (el) el.scrollTop = el.scrollHeight;
 					},
 				},
-				devLogs.length === 0
+				getDevLogs().length === 0
 					? createElement(
 							"div",
 							{
@@ -52,7 +52,7 @@ export const DevConsole = defineWidget<void, [], void>({
 							},
 							"No logs yet",
 						)
-					: devLogs.map((log, i) =>
+					: getDevLogs().map((log, i) =>
 							createElement(
 								"div",
 								{

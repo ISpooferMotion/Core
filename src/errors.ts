@@ -87,3 +87,34 @@ export function invalidDefaultState(widgetName: string): string {
 		"If you need computed initial state, use a factory: defaultState: { value: initialValue }."
 	);
 }
+
+/**
+ * A widget or API function was called outside of a drawing frame
+ * (activeRuntime is null).
+ */
+export function noActiveRuntime(): string {
+	return (
+		`${PREFIX} A widget was called but no drawing frame is active. ` +
+		"Widgets can only be called inside the function you pass to createApp()."
+	);
+}
+
+/**
+ * popContext() called with no matching push.
+ */
+export function unbalancedPopContext(key: string): string {
+	return (
+		`${PREFIX} Unbalanced popContext for key '${key}'. ` +
+		"Make sure every pushContext() has a matching popContext()."
+	);
+}
+
+/**
+ * popLayer() called when only the default layer is on the stack.
+ */
+export function popDefaultLayer(): string {
+	return (
+		`${PREFIX} Cannot pop the default layer. ` +
+		"Make sure every pushLayer() has a matching popLayer()."
+	);
+}

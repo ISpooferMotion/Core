@@ -215,7 +215,7 @@ export function memoBlock(
 		throw new Error(errors.idStackOutsideDraw("memoBlock"));
 	}
 
-	const memoId = runtime.buildId("MemoBlock", id);
+	const memoId = runtime.buildMemoKey(id);
 	const cached = runtime.getMemo(memoId);
 
 	if (cached && shallowEqual(cached.deps, deps)) {

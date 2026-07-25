@@ -1,13 +1,13 @@
 import { mountedRuntimes } from "./runtime";
 
-export function triggerRedraw() {
+function triggerRedraw() {
 	for (const runtime of mountedRuntimes) {
 		runtime.markDirty();
 	}
 }
 
-export const devLogs: string[] = [];
-export let maxLogs = 100;
+const devLogs: string[] = [];
+let maxLogs = 100;
 
 export function pushLog(type: string, ...args: unknown[]) {
 	const msg = args
@@ -23,10 +23,11 @@ export function pushLog(type: string, ...args: unknown[]) {
  * Call this once at the start of your application if you want to use DevConsole.
  */
 export function attachDevConsole(limit = 100) {
+	if (typeof window === "undefined") return;
 	maxLogs = limit;
-	if ((window as unknown as Record<string, unknown>).__ism_console_attached)
-		return;
-	(window as unknown as Record<string, unknown>).__ism_console_attached = true;
+	const win = window as unknown as Record<string, unknown>;
+	if (win.__ism_console_attached) return;
+	win.__ism_console_attached = true;
 
 	const originalLog = console.log;
 	const originalWarn = console.warn;
@@ -47,8 +48,8 @@ export function attachDevConsole(limit = 100) {
 }
 
 /**
- * Get the current captured dev logs.
+ * Get the current captured dev logs as a read-only snapshot.
  */
-export function getDevLogs(): string[] {
+export function getDevLogs(): readonly string[] {
 	return devLogs;
 }

@@ -1,12 +1,18 @@
 name: Release
 
+# Triggers after CI completes on main — avoids duplicating typecheck/lint/test.
+# The head_sha checkout ensures we publish exactly the commit CI validated.
 on:
-  push:
-    branches: ["main"]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Only run when CI actually passed — skip on failure or cancellation.
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: write
 
@@ -15,11 +21,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Check out the exact commit that CI validated, not HEAD of main.
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: "1.3.14"
 
       - name: Setup Node (for npm publish)
         uses: actions/setup-node@v4
@@ -31,15 +39,6 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Test
-        run: bun run test
-
       - name: Build
         run: bun run build
 
@@ -50,7 +49,7 @@ jobs:
       - name: Check if tag already exists
         id: tag_check
         run: |
-          if git rev-parse "v${{ steps.pkg.outputs.version }}" >/dev/null 2>&1; then
+          if git rev-parse "v${{ steps.pkg.outputs.version }}" > /dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
