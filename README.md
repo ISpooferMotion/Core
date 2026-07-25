@@ -5,7 +5,7 @@
 <h1 align="center">@ispoofermotion/core</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.0.0-blue.svg?style=for-the-badge" alt="Version" />
+  <img src="https://img.shields.io/badge/version-3.1.0-blue.svg?style=for-the-badge" alt="Version" />
   <img src="https://img.shields.io/badge/license-Proprietary-red.svg?style=for-the-badge" alt="License: Proprietary" />
   <img src="https://img.shields.io/badge/React-19.0.0-61DAFB.svg?style=for-the-badge&logo=react" alt="React 19" />
 </p>
