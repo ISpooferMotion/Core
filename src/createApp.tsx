@@ -7,7 +7,9 @@ import {
 	useMemo,
 	useReducer,
 } from "react";
-import { ISMCoreErrorBoundary } from "./ErrorBoundary";
+import type { IsmConfig } from "./config";
+import { DevTools } from "./DevTools";
+import { ErrorFallback, ISMCoreErrorBoundary } from "./ErrorBoundary";
 import { Runtime, withRuntime } from "./runtime";
 import type { FrameEntry, StorageAdapter } from "./types";
 
@@ -146,13 +148,13 @@ export function useReactContext<T>(context: React.Context<T>): T {
  * createRoot(document.getElementById("root")!).render(createElement(App));
  * ```
  */
-export interface AppOptions {
+
+/**
+ * Options for createApp.
+ * @since 3.2.0
+ */
+export interface AppOptions extends IsmConfig {
 	storage?: StorageAdapter;
-	/**
-	 * Base z-index applied to non-default layers (modals, tooltips, etc.).
-	 * Defaults to 100.
-	 */
-	layerZIndex?: number;
 }
 
 export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
@@ -188,6 +190,9 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 			runtime.beginFrame();
 			try {
 				drawFn();
+				if (options?.showDevTools) {
+					DevTools();
+				}
 			} catch (err: unknown) {
 				drawError =
 					err instanceof Error ? (err.stack ?? err.message) : String(err);
@@ -197,20 +202,10 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 
 		// If the draw function threw, show a friendly error
 		if (drawError) {
-			return createElement(
-				"pre",
-				{
-					style: {
-						color: "#ff6b6b",
-						padding: "16px",
-						fontFamily: "monospace",
-						fontSize: "14px",
-						whiteSpace: "pre-wrap",
-						wordBreak: "break-word",
-					},
-				},
-				drawError,
-			);
+			return createElement(ErrorFallback, {
+				title: "Draw function error",
+				error: drawError,
+			});
 		}
 
 		// Convert frame buffer to React elements

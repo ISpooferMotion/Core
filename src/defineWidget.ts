@@ -7,7 +7,7 @@ import type {
 	WidgetRenderProps,
 } from "./types";
 
-/// Name validation \\\
+// --- Name validation ---
 
 const INVALID_NAME_CHARS = /[/#\s]/;
 
@@ -31,7 +31,7 @@ function validateDefaultState<S>(name: string, defaultState: S): void {
 	}
 }
 
-/// widgetProps factory \\\
+// --- widgetProps factory ---
 
 function populateWidgetProps<A extends unknown[]>(
 	props: WidgetProps,

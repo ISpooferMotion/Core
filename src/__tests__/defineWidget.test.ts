@@ -13,7 +13,7 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-/// Name validation \\\
+// --- Name validation ---
 
 describe("defineWidget name validation", () => {
 	it("throws for an empty name", () => {
@@ -83,7 +83,7 @@ describe("defineWidget name validation", () => {
 	});
 });
 
-/// Outside-draw guard \\\
+// --- Outside-draw guard ---
 
 describe("widget outside draw guard", () => {
 	it("throws when called outside a draw pass", () => {
@@ -98,7 +98,7 @@ describe("widget outside draw guard", () => {
 	});
 });
 
-/// Conditional rendering \\\
+// --- Conditional rendering ---
 
 describe("conditional widgets", () => {
 	it("preserves state when a widget is absent for one frame then returns", () => {
@@ -163,7 +163,7 @@ describe("conditional widgets", () => {
 	});
 });
 
-/// Loop widgets \\\
+// --- Loop widgets ---
 
 describe("loop widgets with changing counts", () => {
 	it("assigns unique IDs to each iteration via pushId", () => {
@@ -217,7 +217,7 @@ describe("loop widgets with changing counts", () => {
 	});
 });
 
-/// widgetProps injection \\\
+// --- widgetProps injection ---
 
 describe("widgetProps", () => {
 	it("injects data-ism-widget and class names", () => {

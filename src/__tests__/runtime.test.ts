@@ -12,7 +12,7 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-/// Helpers: run a simulated draw pass \\\
+// --- Helpers: run a simulated draw pass ---
 
 function drawPass(fn: () => void) {
 	runtime.beginFrame();
@@ -24,7 +24,7 @@ function registerApp() {
 	runtime.registerApp(() => {}); // no-op trigger for tests
 }
 
-/// State persistence \\\
+// --- State persistence ---
 
 describe("state persistence", () => {
 	it("initializes state with defaultState on first access", () => {
@@ -61,7 +61,7 @@ describe("state persistence", () => {
 	});
 });
 
-/// ID collision detection \\\
+// --- ID collision detection ---
 
 describe("ID collision", () => {
 	it("returns the same ID for the same label in a frame", () => {
@@ -106,7 +106,7 @@ describe("ID collision", () => {
 	});
 });
 
-/// State GC (orphan cleanup) \\\
+// --- State GC (orphan cleanup) ---
 
 describe("state GC", () => {
 	it("removes state for widgets that disappear after a frame", () => {
@@ -202,7 +202,7 @@ describe("state GC", () => {
 	});
 });
 
-/// Scope management \\\
+// --- Scope management ---
 
 describe("scope management", () => {
 	it("pushScope / popScope correctly nest widget children", () => {
@@ -254,7 +254,7 @@ describe("scope management", () => {
 	});
 });
 
-/// markDirty batching \\\
+// --- markDirty batching ---
 
 describe("markDirty batching", () => {
 	it("multiple markDirty calls in the same microtask fire only once", async () => {

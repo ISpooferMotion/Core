@@ -1,10 +1,9 @@
 import { createElement } from "react";
 import { defineWidget } from "./defineWidget";
-import { getDevLogs } from "./logger";
 import { mountedRuntimes } from "./runtime";
 import type { FrameEntry } from "./types";
 
-type Tab = "Console" | "Elements" | "State";
+type Tab = "Elements" | "State";
 
 interface DevToolsState {
 	expanded: boolean;
@@ -34,7 +33,7 @@ function serializeWidgetTree(entries: FrameEntry[], depth = 0): string {
  */
 export const DevTools = defineWidget<DevToolsState, [], void>({
 	name: "DevTools",
-	defaultState: { expanded: false, activeTab: "Console" },
+	defaultState: { expanded: false, activeTab: "Elements" },
 	render: ({ id, state, setState }) => {
 		if (!state.expanded) {
 			return createElement(
@@ -59,7 +58,7 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 						boxShadow: "0 2px 10px rgba(0,0,0,0.5)",
 					},
 				},
-				`🛠 DevTools (Logs: ${getDevLogs().length})`,
+				"🛠 DevTools",
 			);
 		}
 
@@ -126,7 +125,7 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 				createElement(
 					"div",
 					{ style: { display: "flex", gap: "2px" } },
-					(["Console", "Elements", "State"] as Tab[]).map((tab) =>
+					(["Elements", "State"] as Tab[]).map((tab) =>
 						createElement(
 							"div",
 							{
@@ -175,48 +174,6 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 						padding: "8px",
 					},
 				},
-				state.activeTab === "Console" &&
-					createElement(
-						"div",
-						{
-							style: {
-								flex: 1,
-								overflowY: "auto",
-								padding: "8px",
-								display: "flex",
-								flexDirection: "column",
-								gap: "4px",
-								height: "100%",
-							},
-							ref: (el: HTMLDivElement | null) => {
-								if (el) el.scrollTop = el.scrollHeight;
-							},
-						},
-						getDevLogs().length === 0
-							? createElement(
-									"div",
-									{
-										style: {
-											color: "rgba(255,255,255,0.3)",
-											fontStyle: "italic",
-										},
-									},
-									"No logs yet",
-								)
-							: getDevLogs().map((log, i) =>
-									createElement(
-										"div",
-										{
-											key: i,
-											style: {
-												wordBreak: "break-word",
-												whiteSpace: "pre-wrap",
-											},
-										},
-										log,
-									),
-								),
-					),
 				state.activeTab === "Elements" &&
 					createElement(
 						"div",

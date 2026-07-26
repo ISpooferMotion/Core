@@ -34,7 +34,7 @@ function drawPass(fn: () => void) {
 	runtime.endFrame();
 }
 
-/// pushId / popId ///
+// --- pushId / popId ---
 
 describe("pushId / popId", () => {
 	it("throws when pushId is called outside a draw pass", () => {
@@ -68,7 +68,7 @@ describe("pushId / popId", () => {
 	});
 });
 
-/// pushContext / popContext / getContext ///
+// --- pushContext / popContext / getContext ---
 
 describe("pushContext / popContext / getContext", () => {
 	it("throws when any context function is called outside a draw pass", () => {
@@ -116,7 +116,7 @@ describe("pushContext / popContext / getContext", () => {
 	});
 });
 
-/// pushLayer / popLayer ///
+// --- pushLayer / popLayer ---
 
 describe("pushLayer / popLayer", () => {
 	it("throws when called outside a draw pass", () => {
@@ -142,7 +142,7 @@ describe("pushLayer / popLayer", () => {
 	});
 });
 
-/// end() ///
+// --- end() ---
 
 describe("end()", () => {
 	it("throws when called outside a draw pass", () => {
@@ -150,7 +150,7 @@ describe("end()", () => {
 	});
 });
 
-/// markDirty() ///
+// --- markDirty() ---
 
 describe("markDirty()", () => {
 	it("dispatches to all mounted runtimes", async () => {
@@ -187,7 +187,7 @@ describe("markDirty()", () => {
 	});
 });
 
-/// setFocus / isFocused ///
+// --- setFocus / isFocused ---
 
 describe("setFocus / isFocused", () => {
 	it("tracks focus state", () => {
@@ -210,7 +210,7 @@ describe("setFocus / isFocused", () => {
 	});
 });
 
-/// memoBlock ///
+// --- memoBlock ---
 
 describe("memoBlock", () => {
 	it("throws when called outside a draw pass", () => {

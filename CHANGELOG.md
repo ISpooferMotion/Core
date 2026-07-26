@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-07-26
+
+### Added
+
+- **Configuration CLI & JSON Schema**: Introduced a dedicated configuration system via `IsmConfig` and `defineConfig`. Consumers can now manage app settings via `ism.config.json`, which can be bootstrapped instantly using the newly added CLI (`npx ism-core init`).
+- **Enhanced ErrorBoundary UI**: Completely redesigned the internal error catch blocks (both React's `ISMCoreErrorBoundary` and the internal draw pass `drawError`). The new `<ErrorFallback>` component provides a polished, dark-themed diagnostic panel featuring full stack traces, file/line number extraction, and contextual troubleshooting instructions.
+- **Stability Guarantee**: Created `STABILITY.md` in the repository root explicitly documenting the library's strict adherence to backward compatibility and additive-only changes for public APIs since v1.0.0.
+
+### Changed
+
+- Updated all internal block comments to adhere to standard `// --- ---` spacing conventions.
+
+### Removed
+
+- **DevConsole & Logger**: Completely removed the internal `DevConsole` widget and `logger.ts` module, as well as the Console tab from `DevTools`. Console interception is no longer handled by `@ispoofermotion/core`.
+
 ## [3.1.0] - 2026-07-25
 
 ### Added

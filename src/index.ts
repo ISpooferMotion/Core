@@ -43,13 +43,12 @@
  * @since 1.0.0
  */
 
+export * from "./config";
 export type { AppOptions } from "./createApp";
 export { createApp, useReactContext } from "./createApp";
-export { DevConsole } from "./DevConsole";
 export { DevTools } from "./DevTools";
 export { defineWidget } from "./defineWidget";
 export { ISMCoreErrorBoundary, ISMLibErrorBoundary } from "./ErrorBoundary";
-export { attachDevConsole, getDevLogs, pushLog } from "./logger";
 export { makeInteractive } from "./makeInteractive";
 export { extractDisplayLabel } from "./runtime";
 export type {

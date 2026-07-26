@@ -119,7 +119,7 @@ export class Runtime {
 		this.storage = storage ?? null;
 	}
 
-	/// App lifecycle \\\
+	// --- App lifecycle ---
 
 	/**
 	 * Register the React re-render trigger. Called by createApp on mount.
@@ -159,7 +159,7 @@ export class Runtime {
 		return this.appMounted;
 	}
 
-	/// Frame lifecycle \\\
+	// --- Frame lifecycle ---
 
 	/**
 	 * Start a new frame. Clears the frame buffer and per-frame counters.
@@ -231,7 +231,7 @@ export class Runtime {
 		return this.frameRoot;
 	}
 
-	/// Widget state \\\
+	// --- Widget state ---
 
 	/**
 	 * Look up or initialize persistent state for a widget by ID.
@@ -273,7 +273,7 @@ export class Runtime {
 		this.markDirty();
 	}
 
-	/// ID system \\\
+	// --- ID system ---
 
 	/**
 	 * Build a composite ID from the current ID stack, widget name, and label.
@@ -324,7 +324,7 @@ export class Runtime {
 		return rawId;
 	}
 
-	/// Environment Context Stack \\\
+	// --- Environment Context Stack ---
 
 	/**
 	 * Push a value onto a specific context stack key.
@@ -361,7 +361,7 @@ export class Runtime {
 		return stack[stack.length - 1] as T;
 	}
 
-	/// Layers \\\
+	// --- Layers ---
 
 	/**
 	 * Push a layer onto the layer stack. All subsequent root-level widgets
@@ -389,7 +389,7 @@ export class Runtime {
 		return this.activeLayerStack[this.activeLayerStack.length - 1] ?? "default";
 	}
 
-	/// Memoization \\\
+	// --- Memoization ---
 
 	getMemo(id: string): { deps: unknown[]; subtree: FrameEntry[] } | undefined {
 		return this.memoCache.get(id);
@@ -442,7 +442,7 @@ export class Runtime {
 		parentChildren.push(...this.cloneSubtree(subtree));
 	}
 
-	/// Focus Management \\\
+	// --- Focus Management ---
 
 	setFocus(id: string | null): void {
 		if (this.focusedId !== id) {
@@ -455,7 +455,7 @@ export class Runtime {
 		return this.focusedId === id;
 	}
 
-	/// DevTools Inspector \\\
+	// --- DevTools Inspector ---
 
 	getTree(): Map<string, FrameEntry[]> {
 		return this.frameRoot;
@@ -465,7 +465,7 @@ export class Runtime {
 		return this.stateStore;
 	}
 
-	/// Scoping \\\
+	// --- Scoping ---
 
 	/**
 	 * Push a scope onto the scope stack. Called by scoped widgets.
@@ -515,7 +515,7 @@ export class Runtime {
 		return topScope ? topScope.frameEntry.children : [];
 	}
 
-	/// ID stack (pushId / popId) \\\
+	// --- ID stack (pushId / popId) ---
 
 	/**
 	 * Push an ID segment onto the stack.
@@ -539,7 +539,7 @@ export class Runtime {
 		this.idPrefix = this.idStack.length > 0 ? `${this.idStack.join("/")}/` : "";
 	}
 
-	/// Scheduling \\\
+	// --- Scheduling ---
 
 	/**
 	 * Signal that the UI needs a re-render.
@@ -560,7 +560,7 @@ export class Runtime {
 		}
 	}
 
-	/// Transient state consumption \\\
+	// --- Transient state consumption ---
 
 	/**
 	 * Walk the current frame buffer and call consumeStateFn on each widget
@@ -573,7 +573,7 @@ export class Runtime {
 		}
 	}
 
-	/// Internals \\\
+	// --- Internals ---
 
 	private collectIds(entries: FrameEntry[], ids: Set<string>): void {
 		for (const entry of entries) {
