@@ -20,7 +20,7 @@ describe("makeInteractive", () => {
 		props.onKeyDown({
 			key: "Enter",
 			preventDefault: () => {},
-		} as unknown as KeyboardEvent);
+		} as unknown as import("react").KeyboardEvent);
 		expect(called).toBe(true);
 	});
 
@@ -32,7 +32,7 @@ describe("makeInteractive", () => {
 		props.onKeyDown({
 			key: " ",
 			preventDefault: () => {},
-		} as unknown as KeyboardEvent);
+		} as unknown as import("react").KeyboardEvent);
 		expect(called).toBe(true);
 	});
 
@@ -44,7 +44,7 @@ describe("makeInteractive", () => {
 		props.onKeyDown({
 			key: "Tab",
 			preventDefault: () => {},
-		} as unknown as KeyboardEvent);
+		} as unknown as import("react").KeyboardEvent);
 		expect(called).toBe(false);
 	});
 
@@ -59,7 +59,7 @@ describe("makeInteractive", () => {
 		props.onKeyDown({
 			key: "Enter",
 			preventDefault: () => {},
-		} as unknown as KeyboardEvent);
+		} as unknown as import("react").KeyboardEvent);
 		props.onClick();
 		expect(called).toBe(false);
 	});
@@ -67,6 +67,26 @@ describe("makeInteractive", () => {
 	it("includes aria-disabled when disabled", () => {
 		const props = makeInteractive(() => {}, { disabled: true });
 		expect(props["aria-disabled"]).toBe(true);
+	});
+
+	it("omits aria-selected and aria-pressed when not provided", () => {
+		const props = makeInteractive(() => {});
+		expect(props["aria-selected"]).toBeUndefined();
+		expect(props["aria-pressed"]).toBeUndefined();
+		expect("aria-selected" in props).toBe(false);
+		expect("aria-pressed" in props).toBe(false);
+	});
+
+	it("includes aria-selected when selected is provided", () => {
+		const selectedProps = makeInteractive(() => {}, { selected: true });
+		const unselectedProps = makeInteractive(() => {}, { selected: false });
+		expect(selectedProps["aria-selected"]).toBe(true);
+		expect(unselectedProps["aria-selected"]).toBe(false);
+	});
+
+	it("includes aria-pressed when pressed is provided", () => {
+		const pressedProps = makeInteractive(() => {}, { pressed: true });
+		expect(pressedProps["aria-pressed"]).toBe(true);
 	});
 
 	it("fires onClick on extra keys", () => {
@@ -80,7 +100,7 @@ describe("makeInteractive", () => {
 		props.onKeyDown({
 			key: "ArrowRight",
 			preventDefault: () => {},
-		} as unknown as KeyboardEvent);
+		} as unknown as import("react").KeyboardEvent);
 		expect(called).toBe(true);
 	});
 });

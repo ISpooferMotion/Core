@@ -1,13 +1,22 @@
-import type { ReactNode } from "react";
+import type { AriaRole, ReactNode } from "react";
 
 /**
  * Interface for injecting external persistent storage into the engine.
  *
+ * Implementations must be synchronous: `getState` reads from storage
+ * inline during a widget's first registration in a frame, so an async
+ * adapter (e.g. IndexedDB, a network-backed store) is not supported here --
+ * load such data before mounting and seed it via a synchronous adapter
+ * (e.g. an in-memory Map) instead.
+ *
  * @since 2.0.0
  */
 export interface StorageAdapter {
+	/** Return the stored value for `key`, or `undefined`/`null` if absent. */
 	get(key: string): unknown;
+	/** Store `value` under `key`, overwriting any existing value. */
 	set(key: string, value: unknown): void;
+	/** Remove any stored value for `key`. A no-op if nothing is stored. */
 	delete(key: string): void;
 }
 
@@ -34,7 +43,7 @@ export interface WidgetProps {
 	 */
 	className: string;
 	/** ARIA role, if set via WidgetConfig.a11y.role */
-	role?: string;
+	role?: AriaRole;
 	/** ARIA label, if set via WidgetConfig.a11y.label */
 	"aria-label"?: string;
 	/** ARIA description, if set via WidgetConfig.a11y.description */
@@ -51,7 +60,7 @@ export interface WidgetA11y<A extends unknown[] = unknown[]> {
 	 * ARIA role for this widget type (e.g. `"button"`, `"slider"`, `"checkbox"`).
 	 * Applied to every instance.
 	 */
-	role?: string;
+	role?: AriaRole;
 	/**
 	 * ARIA label generator. Can be a static string or a function that receives
 	 * the widget's arguments and returns a label string.

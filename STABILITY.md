@@ -1,6 +1,6 @@
 # Stability Guarantee
 
-**@ispoofermotion/core** provides a strict API stability guarantee for all exported functions, classes, and types from version `1.0.0` onwards.
+**@ispoofermotion/core** provides a strict API stability guarantee for all exported functions, classes, and types, **effective from version `3.2.0` onwards** (the version this guarantee was introduced).
 
 ## Public API Stability
 

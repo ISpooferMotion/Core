@@ -1,3 +1,4 @@
+import type * as React from "react";
 import type { ReactNode } from "react";
 import {
 	createElement,
@@ -8,6 +9,7 @@ import {
 	useReducer,
 } from "react";
 import type { IsmConfig } from "./config";
+import { DEFAULT_LAYER_Z_INDEX } from "./config";
 import { DevTools } from "./DevTools";
 import { ErrorFallback, ISMCoreErrorBoundary } from "./ErrorBoundary";
 import { Runtime, withRuntime } from "./runtime";
@@ -105,7 +107,16 @@ function renderFrameBuffer(
 }
 
 /**
- * Safely access a React Context from within the immediate-mode draw loop.
+ * Read a React Context from within the function you pass to `createApp()`.
+ *
+ * This is a direct passthrough to `useContext` -- it adds no special
+ * handling for the immediate-mode draw loop. Because your draw function
+ * runs synchronously inside `ISMCore`'s render body, calling this remains
+ * fully subject to the Rules of Hooks: call it unconditionally, on every
+ * frame, in the same order. Calling it inside an `if` branch (very natural
+ * in immediate-mode code, e.g. inside `if (Button("x")) { ... }`) will
+ * produce the same "Rendered more hooks than during the previous render"
+ * error as misusing any other hook.
  */
 export function useReactContext<T>(context: React.Context<T>): T {
 	return useContext(context);
@@ -194,6 +205,7 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 					DevTools();
 				}
 			} catch (err: unknown) {
+				console.error("[ism] Uncaught error in draw function:", err);
 				drawError =
 					err instanceof Error ? (err.stack ?? err.message) : String(err);
 			}
@@ -205,12 +217,14 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 			return createElement(ErrorFallback, {
 				title: "Draw function error",
 				error: drawError,
+				kind: "draw",
+				onRetry: () => forceRender(),
 			});
 		}
 
 		// Convert frame buffer to React elements
 		const frameBuffer = runtime.getFrameBuffer();
-		const zIndex = options?.layerZIndex ?? 100;
+		const zIndex = options?.layerZIndex ?? DEFAULT_LAYER_Z_INDEX;
 		return createElement(
 			"div",
 			{ "data-ism-root": "" },

@@ -12,5 +12,5 @@
 - [ ] My code follows the style guidelines of this project
 - [ ] I have performed a self-review of my own code
 - [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have run `bun run lint` and `bun run typecheck`
+- [ ] I have run `bun run lint`, `bun run typecheck`, and `bun run test`
 - [ ] My changes generate no new warnings

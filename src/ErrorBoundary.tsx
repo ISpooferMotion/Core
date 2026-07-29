@@ -1,4 +1,4 @@
-import type { ErrorInfo, ReactNode } from "react";
+import type { CSSProperties, ErrorInfo, ReactNode } from "react";
 import { Component, createElement } from "react";
 
 interface Props {
@@ -9,6 +9,7 @@ interface Props {
 
 interface State {
 	error: Error | null;
+	info: ErrorInfo | null;
 }
 
 /**
@@ -36,6 +37,110 @@ interface State {
  */
 
 /**
+ * Static style objects for {@link ErrorFallback}.
+ *
+ * Hoisted to module scope rather than allocated inline on every render --
+ * `ErrorFallback` only renders on error, so the perf impact of re-allocating
+ * these was always negligible, but keeping them inline was inconsistent with
+ * the rest of the codebase's general "don't reallocate static style/data"
+ * instinct (see `DEFAULT_ACTIVATION_KEYS` in `makeInteractive.ts`).
+ */
+const fallbackStyles = {
+	container: {
+		display: "flex",
+		flexDirection: "column",
+		padding: "24px",
+		fontFamily: "system-ui, -apple-system, sans-serif",
+		color: "#f8f9fa",
+		backgroundColor: "#212529",
+		border: "1px solid #fa5252",
+		borderLeft: "4px solid #fa5252",
+		borderRadius: "8px",
+		margin: "16px",
+		boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+		maxWidth: "100%",
+		overflow: "hidden",
+	},
+	header: {
+		display: "flex",
+		alignItems: "center",
+		marginBottom: "16px",
+		color: "#fa5252",
+	},
+	icon: {
+		width: "24px",
+		height: "24px",
+		marginRight: "12px",
+		flexShrink: 0,
+	},
+	title: { margin: 0, fontSize: "18px", fontWeight: 600 },
+	messageBox: {
+		backgroundColor: "rgba(250, 82, 82, 0.1)",
+		padding: "12px",
+		borderRadius: "6px",
+		marginBottom: "16px",
+		borderLeft: "2px solid rgba(250, 82, 82, 0.5)",
+	},
+	messageCode: {
+		fontFamily: "monospace",
+		fontSize: "14px",
+		color: "#ffc9c9",
+		whiteSpace: "pre-wrap",
+		wordBreak: "break-word",
+	},
+	tipsSection: { marginBottom: "16px" },
+	tipsHeading: {
+		display: "block",
+		marginBottom: "8px",
+		fontSize: "14px",
+		color: "#adb5bd",
+	},
+	tipsList: {
+		margin: 0,
+		paddingLeft: "24px",
+		fontSize: "14px",
+		color: "#ced4da",
+		lineHeight: 1.5,
+	},
+	stackSection: {
+		marginTop: "8px",
+		paddingTop: "16px",
+		borderTop: "1px solid #495057",
+	},
+	stackHeading: {
+		display: "block",
+		marginBottom: "12px",
+		fontSize: "14px",
+		color: "#adb5bd",
+	},
+	stackBox: {
+		backgroundColor: "#181b1e",
+		padding: "16px",
+		borderRadius: "6px",
+		overflowX: "auto",
+	},
+	stackPre: {
+		margin: 0,
+		fontFamily: "monospace",
+		fontSize: "12px",
+		color: "#868e96",
+		whiteSpace: "pre",
+	},
+	retryButton: {
+		marginTop: "16px",
+		alignSelf: "flex-start",
+		backgroundColor: "#fa5252",
+		color: "#212529",
+		border: "none",
+		borderRadius: "6px",
+		padding: "8px 16px",
+		fontSize: "14px",
+		fontWeight: 600,
+		cursor: "pointer",
+	},
+} satisfies Record<string, CSSProperties>;
+
+/**
  * A styled fallback UI for displaying errors caught by `ISMCoreErrorBoundary`
  * or `createApp`'s internal draw pass.
  *
@@ -45,10 +150,16 @@ export function ErrorFallback({
 	title,
 	error,
 	info,
+	kind = "render",
+	onRetry,
 }: {
 	title: string;
 	error: Error | string;
 	info?: ErrorInfo;
+	/** Which tip list to show. Explicit rather than inferred from `title`. */
+	kind?: "render" | "draw";
+	/** If provided, shows a "Try again" button that calls this to recover. */
+	onRetry?: () => void;
 }): ReactNode {
 	const errorMessage = error instanceof Error ? error.message : String(error);
 	const stackTrace = error instanceof Error ? error.stack : undefined;
@@ -57,32 +168,12 @@ export function ErrorFallback({
 		"div",
 		{
 			"data-ism-error": "",
-			style: {
-				display: "flex",
-				flexDirection: "column",
-				padding: "24px",
-				fontFamily: "system-ui, -apple-system, sans-serif",
-				color: "#f8f9fa",
-				backgroundColor: "#212529",
-				border: "1px solid #fa5252",
-				borderLeft: "4px solid #fa5252",
-				borderRadius: "8px",
-				margin: "16px",
-				boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-				maxWidth: "100%",
-				overflow: "hidden",
-			},
+			role: "alert",
+			style: fallbackStyles.container,
 		},
 		createElement(
 			"div",
-			{
-				style: {
-					display: "flex",
-					alignItems: "center",
-					marginBottom: "16px",
-					color: "#fa5252",
-				},
-			},
+			{ style: fallbackStyles.header },
 			createElement(
 				"svg",
 				{
@@ -90,80 +181,41 @@ export function ErrorFallback({
 					fill: "none",
 					stroke: "currentColor",
 					strokeWidth: "2",
-					style: {
-						width: "24px",
-						height: "24px",
-						marginRight: "12px",
-						flexShrink: 0,
-					},
+					"aria-hidden": "true",
+					style: fallbackStyles.icon,
 				},
 				createElement("circle", { cx: "12", cy: "12", r: "10" }),
 				createElement("line", { x1: "12", y1: "8", x2: "12", y2: "12" }),
 				createElement("line", { x1: "12", y1: "16", x2: "12.01", y2: "16" }),
 			),
-			createElement(
-				"h2",
-				{ style: { margin: 0, fontSize: "18px", fontWeight: 600 } },
-				title,
-			),
+			createElement("h2", { style: fallbackStyles.title }, title),
 		),
 		createElement(
 			"div",
-			{
-				style: {
-					backgroundColor: "rgba(250, 82, 82, 0.1)",
-					padding: "12px",
-					borderRadius: "6px",
-					marginBottom: "16px",
-					borderLeft: "2px solid rgba(250, 82, 82, 0.5)",
-				},
-			},
+			{ style: fallbackStyles.messageBox },
 			createElement(
 				"code",
-				{
-					style: {
-						fontFamily: "monospace",
-						fontSize: "14px",
-						color: "#ffc9c9",
-						whiteSpace: "pre-wrap",
-						wordBreak: "break-word",
-					},
-				},
+				{ style: fallbackStyles.messageCode },
 				errorMessage,
 			),
 		),
 		createElement(
 			"div",
-			{ style: { marginBottom: "16px" } },
+			{ style: fallbackStyles.tipsSection },
 			createElement(
 				"strong",
-				{
-					style: {
-						display: "block",
-						marginBottom: "8px",
-						fontSize: "14px",
-						color: "#adb5bd",
-					},
-				},
+				{ style: fallbackStyles.tipsHeading },
 				"How to fix:",
 			),
 			createElement(
 				"ul",
-				{
-					style: {
-						margin: 0,
-						paddingLeft: "24px",
-						fontSize: "14px",
-						color: "#ced4da",
-						lineHeight: 1.5,
-					},
-				},
+				{ style: fallbackStyles.tipsList },
 				createElement(
 					"li",
 					null,
 					"Check the stack trace below to identify the exact file and line number causing the issue.",
 				),
-				title.includes("render")
+				kind === "render"
 					? createElement(
 							"li",
 							null,
@@ -184,46 +236,18 @@ export function ErrorFallback({
 		stackTrace || info?.componentStack
 			? createElement(
 					"div",
-					{
-						style: {
-							marginTop: "8px",
-							paddingTop: "16px",
-							borderTop: "1px solid #495057",
-						},
-					},
+					{ style: fallbackStyles.stackSection },
 					createElement(
 						"strong",
-						{
-							style: {
-								display: "block",
-								marginBottom: "12px",
-								fontSize: "14px",
-								color: "#adb5bd",
-							},
-						},
+						{ style: fallbackStyles.stackHeading },
 						"Stack Trace:",
 					),
 					createElement(
 						"div",
-						{
-							style: {
-								backgroundColor: "#181b1e",
-								padding: "16px",
-								borderRadius: "6px",
-								overflowX: "auto",
-							},
-						},
+						{ style: fallbackStyles.stackBox },
 						createElement(
 							"pre",
-							{
-								style: {
-									margin: 0,
-									fontFamily: "monospace",
-									fontSize: "12px",
-									color: "#868e96",
-									whiteSpace: "pre",
-								},
-							},
+							{ style: fallbackStyles.stackPre },
 							stackTrace,
 							info?.componentStack
 								? `\n\nComponent Stack:\n${info.componentStack}`
@@ -232,29 +256,50 @@ export function ErrorFallback({
 					),
 				)
 			: null,
+		onRetry
+			? createElement(
+					"button",
+					{
+						type: "button" as const,
+						onClick: onRetry,
+						style: fallbackStyles.retryButton,
+					},
+					"Try again",
+				)
+			: null,
 	);
 }
 
 export class ISMCoreErrorBoundary extends Component<Props, State> {
-	constructor(props: Props) {
-		super(props);
-		this.state = { error: null };
-	}
+	state: State = { error: null, info: null };
 
-	static getDerivedStateFromError(error: Error): State {
+	static getDerivedStateFromError(error: Error): Pick<State, "error"> {
 		return { error };
 	}
 
-	componentDidCatch(error: Error, info: ErrorInfo): void {
+	componentDidCatch = (error: Error, info: ErrorInfo): void => {
+		this.setState({ info });
 		this.props.onError?.(error, info);
 		console.error("[ism] Uncaught error in widget render:", error, info);
-	}
+	};
+
+	/**
+	 * Clear the caught error and let children render again.
+	 * Bound as an instance property so it can be passed directly as a
+	 * React event handler / onRetry callback without rebinding.
+	 */
+	private resetError = (): void => {
+		this.setState({ error: null, info: null });
+	};
 
 	render(): ReactNode {
 		if (this.state.error) {
 			return createElement(ErrorFallback, {
 				title: "Widget render error",
 				error: this.state.error,
+				...(this.state.info ? { info: this.state.info } : {}),
+				kind: "render",
+				onRetry: this.resetError,
 			});
 		}
 		return this.props.children;

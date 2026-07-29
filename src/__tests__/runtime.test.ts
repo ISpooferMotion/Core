@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Runtime, setActiveRuntime } from "../runtime";
+import { getRuntimeForId, Runtime, setActiveRuntime } from "../runtime";
 
 let runtime: Runtime;
 beforeEach(() => {
@@ -270,5 +270,97 @@ describe("markDirty batching", () => {
 		// All three calls should be batched into one trigger
 		await Promise.resolve(); // flush microtask queue
 		expect(renderCount).toBe(1);
+	});
+});
+
+// --- Cross-runtime id ownership ---
+
+describe("getRuntimeForId", () => {
+	it("resolves to the runtime that built the id", () => {
+		registerApp();
+		let id = "";
+		drawPass(() => {
+			id = runtime.buildId("Button", "save");
+		});
+		expect(getRuntimeForId(id)).toBe(runtime);
+		runtime.unregisterApp();
+	});
+
+	it("returns undefined for an id no runtime owns", () => {
+		expect(getRuntimeForId("nonexistent")).toBeUndefined();
+	});
+
+	it("stops owning an id after unregisterApp", () => {
+		registerApp();
+		let id = "";
+		drawPass(() => {
+			id = runtime.buildId("Button", "save");
+		});
+		runtime.unregisterApp();
+		expect(getRuntimeForId(id)).toBeUndefined();
+	});
+
+	it("does not let one runtime's ids collide with another's bookkeeping", () => {
+		registerApp();
+		const other = new Runtime();
+		other.registerApp(() => {});
+
+		let idA = "";
+		drawPass(() => {
+			idA = runtime.buildId("Button", "save");
+		});
+
+		let idB = "";
+		other.beginFrame();
+		idB = other.buildId("Button", "cancel");
+		other.endFrame();
+
+		// Distinct ids from distinct runtimes each resolve to their own owner.
+		expect(getRuntimeForId(idA)).toBe(runtime);
+		expect(getRuntimeForId(idB)).toBe(other);
+
+		other.unregisterApp();
+	});
+
+	it("resolves a genuine cross-app id collision to a match rather than throwing, and warns once", () => {
+		registerApp();
+		const other = new Runtime();
+		other.registerApp(() => {});
+
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+		let idA = "";
+		drawPass(() => {
+			idA = runtime.buildId("Button", "save");
+		});
+
+		// Same widget name + label + no pushId scoping -> same composite id.
+		other.beginFrame();
+		const idB = other.buildId("Button", "save");
+		other.endFrame();
+		expect(idB).toBe(idA);
+
+		const resolved = getRuntimeForId(idA);
+		expect(resolved === runtime || resolved === other).toBe(true);
+		expect(warnSpy).toHaveBeenCalled();
+
+		warnSpy.mockRestore();
+		other.unregisterApp();
+	});
+
+	it("registerExternalId lets hand-constructed sub-ids resolve to their owning runtime", () => {
+		registerApp();
+		let id = "";
+		drawPass(() => {
+			id = runtime.buildId("DevTools", undefined);
+		});
+
+		const subId = `${id}/close`;
+		expect(getRuntimeForId(subId)).toBeUndefined();
+
+		runtime.registerExternalId(subId);
+		expect(getRuntimeForId(subId)).toBe(runtime);
+
+		runtime.unregisterApp();
 	});
 });

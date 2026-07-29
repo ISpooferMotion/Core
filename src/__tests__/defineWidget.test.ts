@@ -71,6 +71,28 @@ describe("defineWidget name validation", () => {
 		).toThrow("[ism]");
 	});
 
+	it("throws at definition time when defaultState contains a nested function", () => {
+		expect(() =>
+			defineWidget({
+				name: "BadNested",
+				defaultState: { onDone: () => {} },
+				render: () => null,
+				getReturnValue: () => undefined,
+			}),
+		).toThrow("not structured-cloneable");
+	});
+
+	it("accepts defaultState with Map/Set/Date values", () => {
+		expect(() =>
+			defineWidget({
+				name: "GoodComplexState",
+				defaultState: { m: new Map(), s: new Set(), d: new Date() },
+				render: () => null,
+				getReturnValue: () => undefined,
+			}),
+		).not.toThrow();
+	});
+
 	it("accepts a valid name", () => {
 		expect(() =>
 			defineWidget({

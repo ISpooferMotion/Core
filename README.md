@@ -5,8 +5,8 @@
 <h1 align="center">@ispoofermotion/core</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.1.0-blue.svg?style=for-the-badge" alt="Version" />
-  <img src="https://img.shields.io/badge/license-Proprietary-red.svg?style=for-the-badge" alt="License: Proprietary" />
+  <img src="https://img.shields.io/badge/version-3.3.0-blue.svg?style=for-the-badge" alt="Version" />
+  <img src="https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge" alt="License: MIT" />
   <img src="https://img.shields.io/badge/React-19.0.0-61DAFB.svg?style=for-the-badge&logo=react" alt="React 19" />
 </p>
 
@@ -16,7 +16,7 @@
 
 ## Overview
 
-`@ispoofermotion/core` provides a highly optimized, React-based runtime for any UI layer. It abstracts away complex React state and layout thrashing by offering a specialized `defineWidget` API tailored for high-frequency IPC state streaming and headless rendering synchronization.
+`@ispoofermotion/core` provides a highly optimized, React-based immediate-mode runtime for building UI on top of React 18+ (CI currently exercises React 19; React 18 is accepted via `peerDependencies` but isn't yet part of the test matrix). It abstracts away manual React state wiring by offering a specialized `defineWidget` API for pooled, allocation-light widget state and re-renders, well suited to UIs that update frequently (e.g. driven by Tauri IPC events).
 
 ### Installation
 
@@ -27,7 +27,7 @@ bun add @ispoofermotion/core
 ## Architecture
 
 * **Widget System (`defineWidget`)**: A declarative factory for defining UI components with isolated state boundaries, built-in accessibility scaffolding, and predictable re-render cycles.
-* **Runtime Orchestration (`createApp`)**: A customized application mount wrapper that handles global error boundaries, React 19 concurrent mode initialization, and root-level IPC injection.
+* **Runtime Orchestration (`createApp`)**: Returns a plain React component that wraps your draw function in an internal error boundary and schedules re-renders for you. You mount it yourself with `createRoot` exactly as you would any other component -- `createApp` does not perform concurrent-mode initialization or IPC injection on your behalf. If you're using Tauri, wire up `listen(...)` + `markDirty()` yourself (see the Usage example below).
 * **Style Engine**: Bundles the baseline `styles.css` containing global aesthetic resets and tactile layout primitives.
 
 ## Usage
@@ -38,12 +38,17 @@ bun add @ispoofermotion/core
 import { defineWidget } from "@ispoofermotion/core";
 import { createElement } from "react";
 
-export const ProfileCard = defineWidget({
+export const ProfileCard = defineWidget<{ clicked: boolean }, [name: string], boolean>({
   name: "ProfileCard",
   defaultState: { clicked: false },
-  render: ({ state, setState, args }) => {
-    return createElement("div", null, `Hello ${args[0]}`);
-  }
+  a11y: { role: "button", label: ([name]) => `View profile for ${name}` },
+  render: ({ id, state, setState, args, widgetProps }) =>
+    createElement(
+      "div",
+      { key: id, ...widgetProps, onClick: () => setState({ clicked: true }) },
+      `Hello ${args[0]}`,
+    ),
+  getReturnValue: (state) => state.clicked,
 });
 ```
 
@@ -59,4 +64,4 @@ export const ProfileCard = defineWidget({
 
 ## License
 
-Proprietary and Confidential. Unauthorized copying, distribution, or usage of this file, via any medium, is strictly prohibited.
+MIT © ISpooferMotion. See [LICENSE](./LICENSE).
