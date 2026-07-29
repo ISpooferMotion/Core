@@ -8,6 +8,15 @@
 /* Applied to every ism widget root element */
 .ism-widget {
 	box-sizing: border-box;
+	/*
+	 * createApp() wraps every non-default layer (modals, tooltips -- see
+	 * pushLayer/popLayer) in a fullscreen div with pointer-events: none, so
+	 * clicks pass through the transparent areas to whatever is behind the
+	 * layer. Without this rule, that also makes every widget rendered
+	 * inside such a layer unclickable, since pointer-events: none is
+	 * inherited by descendants. This opts widgets back in individually.
+	 */
+	pointer-events: auto;
 }
 
 /* Root container created by createApp() */
@@ -18,5 +27,4 @@
 /* Error boundary container */
 [data-ism-error] {
 	box-sizing: border-box;
-	font-family: monospace;
 }

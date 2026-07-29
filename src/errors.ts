@@ -1,6 +1,18 @@
 const PREFIX = "[ism]";
 
 /**
+ * Normalize a caught value (which TypeScript types as `unknown`, since
+ * JavaScript allows throwing anything) into a display-ready message string.
+ *
+ * Centralizes the `err instanceof Error ? err.message : String(err)`
+ * pattern that was previously duplicated across `cli.ts`, `DevTools.ts`,
+ * and `runtime.ts`.
+ */
+export function getErrorMessage(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+/**
  * Widget called outside of a draw function.
  */
 export function widgetOutsideDraw(
@@ -116,5 +128,48 @@ export function popDefaultLayer(): string {
 	return (
 		`${PREFIX} Cannot pop the default layer. ` +
 		"Make sure every pushLayer() has a matching popLayer()."
+	);
+}
+
+/**
+ * defaultState failed structuredClone() at defineWidget() time (a nested
+ * function, class instance, DOM node, Symbol, etc). Caught here -- rather
+ * than only at the first widget call, deep inside a user's app -- so the
+ * failure surfaces immediately when the widget is defined.
+ */
+export function defaultStateNotCloneable(
+	widgetName: string,
+	message: string,
+): string {
+	return (
+		`${PREFIX} defineWidget("${widgetName}")'s defaultState is not structured-cloneable: ${message} ` +
+		"defaultState must consist of plain objects, arrays, primitives, Map, " +
+		"Set, or Date. Class instances, DOM nodes, Symbols, and functions " +
+		"(including nested ones) are not supported."
+	);
+}
+
+/**
+ * structuredClone(defaultState) failed for a given widget instance id.
+ */
+export function defaultStateCloneFailure(id: string, message: string): string {
+	return (
+		`${PREFIX} Failed to initialize state for widget '${id}': ${message} ` +
+		"defaultState must be structured-cloneable (plain objects, arrays, " +
+		"primitives, Map, Set, Date). Class instances, DOM nodes, and functions " +
+		"are not supported."
+	);
+}
+
+/**
+ * memoBlock's drawClosure left scopes open (or closed extra ones), so the
+ * captured subtree cannot be trusted.
+ */
+export function memoBlockUnbalancedScope(id: string): string {
+	return (
+		`${PREFIX} memoBlock('${id}') closure left an unbalanced scope stack ` +
+		"(a scoped widget was opened without a matching end(), or vice versa). " +
+		"The captured subtree may be incorrect. Make sure every scoped widget " +
+		"inside a memoBlock closure has a matching end() before the closure returns."
 	);
 }

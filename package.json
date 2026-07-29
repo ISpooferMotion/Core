@@ -1,7 +1,26 @@
 {
   "name": "@ispoofermotion/core",
-  "version": "3.2.0",
+  "version": "3.3.0",
+  "description": "Immediate-mode UI runtime for Tauri + React.",
   "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ISpooferMotion/core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ISpooferMotion/core/issues"
+  },
+  "homepage": "https://github.com/ISpooferMotion/core#readme",
+  "keywords": [
+    "immediate-mode",
+    "ui",
+    "react",
+    "tauri"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -51,7 +70,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
-    "@types/node": "^26.1.0",
+    "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitest/coverage-v8": "^4.1.9",

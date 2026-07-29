@@ -1,7 +1,5 @@
 name: Release
 
-# Triggers after CI completes on main — avoids duplicating typecheck/lint/test.
-# The head_sha checkout ensures we publish exactly the commit CI validated.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -11,17 +9,18 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
-    # Only run when CI actually passed — skip on failure or cancellation.
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # Check out the exact commit that CI validated, not HEAD of main.
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Setup Bun
@@ -76,7 +75,6 @@ jobs:
 
       - name: Publish to npm
         if: steps.tag_check.outputs.exists == 'false'
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

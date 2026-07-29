@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   build-and-test:
@@ -27,8 +27,18 @@ jobs:
       - name: Lint
         run: bun run lint
 
-      - name: Test
-        run: bun run test
+      - name: Test (with coverage thresholds)
+        run: bun run test:coverage
 
       - name: Build
         run: bun run build
+
+      - name: Setup Node (for the plain-Node CLI smoke test)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Smoke test built CLI under plain Node
+        run: |
+          node dist/cli.js --version
+          node dist/cli.js --help

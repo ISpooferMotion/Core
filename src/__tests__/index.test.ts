@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	end,
 	getContext,
+	getFocusedId,
 	isFocused,
 	markDirty,
 	memoBlock,
@@ -207,6 +208,62 @@ describe("setFocus / isFocused", () => {
 		setFocus("widget-2");
 		expect(isFocused("widget-1")).toBe(false);
 		expect(isFocused("widget-2")).toBe(true);
+	});
+
+	it("does not throw when called with no active runtime (e.g. from a DOM event handler)", () => {
+		setActiveRuntime(null);
+		expect(() => setFocus("widget-1")).not.toThrow();
+		expect(() => isFocused("widget-1")).not.toThrow();
+	});
+
+	it("routes to the id's owning runtime when no runtime is active", () => {
+		let id = "";
+		drawPass(() => {
+			id = runtime.buildId("Button", "save");
+		});
+
+		const other = new Runtime();
+		other.registerApp(() => {});
+
+		setActiveRuntime(null);
+		setFocus(id);
+
+		expect(isFocused(id)).toBe(true);
+		expect(other.isFocused(id)).toBe(false);
+
+		other.unregisterApp();
+	});
+
+	it("broadcasts to every mounted runtime for an unowned id with no active runtime", () => {
+		const other = new Runtime();
+		other.registerApp(() => {});
+
+		setActiveRuntime(null);
+		setFocus("not-yet-drawn");
+
+		expect(runtime.isFocused("not-yet-drawn")).toBe(true);
+		expect(other.isFocused("not-yet-drawn")).toBe(true);
+		expect(isFocused("not-yet-drawn")).toBe(true);
+
+		other.unregisterApp();
+	});
+});
+
+// --- getFocusedId ---
+
+describe("getFocusedId", () => {
+	it("returns null when nothing is focused", () => {
+		expect(getFocusedId()).toBeNull();
+	});
+
+	it("returns the currently focused id", () => {
+		setFocus("widget-1");
+		expect(getFocusedId()).toBe("widget-1");
+	});
+
+	it("throws when called with no active runtime", () => {
+		setActiveRuntime(null);
+		expect(() => getFocusedId()).toThrow("[ism]");
 	});
 });
 

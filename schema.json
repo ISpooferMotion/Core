@@ -4,11 +4,13 @@
   "properties": {
     "layerZIndex": {
       "type": "number",
-      "description": "Base z-index applied to non-default layers (modals, tooltips, etc.). Defaults to 100."
+      "description": "Base z-index applied to non-default layers (modals, tooltips, etc.). Defaults to 100.",
+      "default": 100
     },
     "showDevTools": {
       "type": "boolean",
-      "description": "Automatically mount the dockable DevTools UI over your app. Defaults to false."
+      "description": "Automatically mount the dockable DevTools UI over your app. Defaults to false.",
+      "default": false
     }
   },
   "additionalProperties": false

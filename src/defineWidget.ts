@@ -29,6 +29,17 @@ function validateDefaultState<S>(name: string, defaultState: S): void {
 	if (typeof defaultState === "function") {
 		throw new Error(errors.invalidDefaultState(name));
 	}
+	// structuredClone is also what runtime.getState() uses to initialize each
+	// instance's state; running it here surfaces non-cloneable defaultState
+	// (nested functions, class instances, DOM nodes, Symbols) at definition
+	// time instead of at an arbitrary later call site.
+	try {
+		structuredClone(defaultState);
+	} catch (err) {
+		throw new Error(
+			errors.defaultStateNotCloneable(name, errors.getErrorMessage(err)),
+		);
+	}
 }
 
 // --- widgetProps factory ---
@@ -183,8 +194,17 @@ export function defineWidget<S, A extends unknown[], R>(
 		const label = getLabel(...args);
 		const id = runtime.buildId(name, label);
 
-		// Look up or initialize persistent state
-		const state = runtime.getState<S>(id, defaultState);
+		// Look up or initialize persistent state.
+		// The persistent flag must be forwarded here: getState only reads
+		// from storage on the id's first registration this session, and
+		// this is that first registration (createApp's renderEntry call
+		// happens later in the same frame and will see the id already
+		// present in stateStore, so it would never trigger the storage read).
+		const state = runtime.getState<S>(
+			id,
+			defaultState,
+			config.persistent ?? false,
+		);
 
 		// Acquire frame entry from the zero-allocation pool
 		const entry = runtime.acquireFrameEntry();

@@ -3,6 +3,7 @@ node_modules/
 
 # Build outputs
 dist/
+docs/
 
 # IDEs and editors
 .idea/
@@ -21,4 +22,4 @@ dist/
 
 # Package manager
 bun.lockb
-coverage/  
+coverage/

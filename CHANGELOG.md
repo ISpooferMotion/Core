@@ -6,6 +6,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-07-29
+
+### Added
+
+- **`getFocusedId()`**: returns the currently focused widget id from within a draw pass.
+- **`DEFAULT_LAYER_Z_INDEX`** and **`DEFAULT_SHOW_DEV_TOOLS`** exported from `config.ts` as the single source of truth for `IsmConfig`'s defaults, consumed by both `createApp`'s runtime fallback and the `ism-core init` CLI scaffold (and now kept in sync with `schema.json` by a regression test).
+- **CLI**: `ism-core init` now supports `--help`/`-h`, `--version`/`-v`, and `--force` (overwrite an existing config), and returns proper process exit codes instead of always exiting 0. `runCli()`/`CliDeps` are now exported so the CLI itself has test coverage for the first time.
+- **`makeInteractive`**: new `role`, `selected`, and `pressed` options, producing `role`, `aria-selected`, and `aria-pressed` respectively -- needed for correct `tab`/`option`/toggle-button ARIA patterns (used by DevTools' own tabs, see below).
+- **`ErrorFallback`**: new optional `kind` (`"render" | "draw"`, replacing a fragile `title.includes("render")` check) and `onRetry` props; the boundary now shows a "Try again" button that resets the caught error and re-renders.
+- `Runtime#registerExternalId`/`Runtime#ownsId` (internal), letting a widget register a hand-constructed sub-id (one that doesn't correspond to a separate widget instance) so `makeInteractive`'s focus/blur routing can resolve it via `getRuntimeForId`.
+- Test coverage for `getRuntimeForId` (including the cross-runtime ownership and collision-warning paths), the CLI, and the `schema.json`/`config.ts` defaults-sync regression test.
+
+### Fixed
+
+- **Cross-runtime id ownership**: id-to-runtime ownership is now tracked per `Runtime` instance instead of in a single map shared by every mounted app. Previously, two independent `createApp()` roots that happened to produce the same composite id (e.g. same widget names, no `pushId`) would silently steal ownership from each other, breaking focus tracking for whichever app drew first in a frame. A genuine cross-app collision is now an explicit, once-per-id warning instead of a silent overwrite.
+- **Persistent widgets never actually read from storage**: `defineWidget` wasn't forwarding its `persistent` flag to `runtime.getState()`, so `StorageAdapter.get()` was never consulted on a widget's first registration -- persistent widgets silently behaved as if `persistent` were always `false`. Also fixed the inverse leak: the automatic per-frame `consumeState` reset now writes through to storage for persistent widgets, so a saved value no longer silently drifts from what's actually in memory.
+- **`memoBlock` cache leak**: cached subtrees for a dynamically-keyed `memoBlock` (e.g. one keyed by a list item's id) were never evicted once that key stopped appearing -- a long-lived app with a changing list leaked one cache entry per removed item. Now garbage-collected on the same TTL model as widget state.
+- **Widgets inside layers (modals/tooltips) were unclickable**: `createApp` wraps non-default layers in a `pointer-events: none` container so clicks pass through empty areas, but that also disabled clicks on the actual widgets inside, since `pointer-events: none` is inherited. `.ism-widget` now explicitly opts back in.
+- **DevTools focus tracking**: the Elements/State tab buttons and the close button now register their sub-ids with the owning runtime, so `makeInteractive`'s focus/blur handlers no longer silently no-op for them.
+- **DevTools accessibility**: the tab/tabpanel relationship now uses proper `aria-controls`/`id`/`aria-labelledby` wiring instead of a bare text `aria-label` on the tabpanel.
+- **DevTools performance**: snapshotting the live widget tree/state store now happens only for the visible tab, and is throttled to at most once per 250ms, instead of fully re-serializing everything on every host-app frame.
+- **`defineWidget`**: `defaultState` is now validated with `structuredClone` at definition time, so a non-cloneable value (a nested function, class instance, DOM node, Symbol) throws immediately at the `defineWidget()` call site instead of failing confusingly the first time the widget is drawn.
+- **`memoBlock`**: detects and reports when a memoized closure leaves the scope stack unbalanced (a scoped widget opened without a matching `end()`, or vice versa), instead of silently capturing an incorrect subtree.
+- **Error fallback accessibility**: `ErrorFallback` now announces itself to assistive technology (`role="alert"`) and marks its decorative icon `aria-hidden`; its inline style objects are now hoisted constants instead of being reallocated on every render.
+- **CLI Windows compatibility**: the entry-point check in `cli.ts` no longer breaks on Windows paths containing spaces or backslashes (now uses `pathToFileURL` for a normalized comparison instead of a raw string comparison against `import.meta.url`); also removed the unused `existsSync` dependency from `CliDeps` (the atomic `"wx"` write flag already handles the exists-check).
+- Corrected README language overstating `createApp`'s capabilities (it does not perform React concurrent-mode initialization or IPC injection on your behalf) and fixed the README's flagship widget example, which was missing the required `getReturnValue` field and didn't demonstrate `widgetProps`.
+- Reconciled the "stable since v1.0.0" stability claim (in both `STABILITY.md` and `index.ts`'s package doc comment) with the `DevConsole` removal documented under `3.2.0` below -- both now correctly scope the guarantee as effective from `3.2.0` onwards.
+- `WidgetProps.role`/`WidgetA11y.role` narrowed from `string` to React's `AriaRole` union, and `makeInteractive`'s `onKeyDown` handler is now typed against React's synthetic `KeyboardEvent` instead of the DOM's -- both are type-accuracy fixes, not behavior changes (see note below).
+
+### Changed
+
+- **License**: relicensed from proprietary to MIT.
+- `package.json` gained `description`, `repository`, `bugs`, `homepage`, `keywords`, and an `engines.node >=20` constraint.
+- CI now runs `test:coverage` instead of a plain test pass (enforcing the thresholds already configured in `vitest.config.ts`), and smoke-tests the built CLI under plain Node.
+- The release workflow now publishes with npm provenance (`--provenance`) and verifies a `workflow_run` event actually originated from this repository (not a fork's PR) before checkout/build/publish.
+- Split the Husky `pre-commit` hook (lint-staged only) from a new `pre-push` hook (full typecheck + test suite), so a slow test no longer blocks every local commit.
+- Loosened `performance.test.ts`'s widget-draw timing assertion to include warm-up iterations and a median-of-several-runs measurement against a wider, still-meaningful margin, reducing CI flakiness from shared-runner timing variance.
+- `defineConfig()` now throws for a non-finite `layerZIndex` or non-boolean `showDevTools` instead of silently accepting them (e.g. previously a `NaN` could reach a CSS `zIndex` property unnoticed).
+
+**A note on the two type-level items above:** narrowing `role` to `AriaRole` and typing `onKeyDown` against React's event type are, strictly, changes to public type signatures. In practice neither changes runtime behavior, and both only affect code that was already passing an invalid ARIA role or relying on an inaccurate DOM-event type in place of the React event type it was actually receiving -- i.e., code that was already incorrect. `peerDependencies` remains `>=18.0.0` (no consumer-facing requirement changed); CI currently exercises React 19 only, noted in the README as a test-coverage gap rather than a support-range change. On that basis this is released as a **minor** version rather than a major one -- see the version-bump rationale in the project's PR/release notes for the full reasoning.
+
 ## [3.2.0] - 2026-07-26
 
 ### Added

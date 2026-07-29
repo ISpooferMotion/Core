@@ -38,8 +38,7 @@ class FramePool {
 					className: "",
 				},
 				renderFn: () => null,
-				consumeStateFn: undefined,
-			} as unknown as FrameEntry);
+			} satisfies FrameEntry);
 		}
 		const entry = this.pool[this.index++] as FrameEntry;
 		entry.children.length = 0;
@@ -72,6 +71,12 @@ export class Runtime {
 		{ deps: unknown[]; subtree: FrameEntry[] }
 	>();
 
+	/** TTL for graceful memoBlock cache exits (memoKey -> expiry timestamp ms) */
+	private memoTTL = new Map<string, number>();
+
+	/** memoBlock keys touched during the current frame (for TTL-based GC) */
+	private memoKeysThisFrame = new Set<string>();
+
 	/** ID stack for pushId/popId scoping */
 	private idStack: string[] = [];
 
@@ -92,6 +97,23 @@ export class Runtime {
 
 	/** Globally tracked focused widget ID */
 	private focusedId: string | null = null;
+
+	/**
+	 * Composite ids (including hand-registered sub-ids, see
+	 * {@link registerExternalId}) owned by *this* runtime instance.
+	 *
+	 * Previously this bookkeeping lived in a single module-level
+	 * `idOwnerRuntime` map shared by every `Runtime` on the page. Because id
+	 * composition is purely content-based (stack prefix + widget name +
+	 * label) with no per-runtime namespace, two independent `createApp()`
+	 * roots with structurally similar draw functions could produce the same
+	 * composite id, and the shared map meant whichever runtime drew last
+	 * silently stole ownership from the other -- with no warning. Keeping
+	 * this set per-instance means each runtime's own bookkeeping can never be
+	 * corrupted by another runtime; see {@link getRuntimeForId} for how
+	 * lookups across instances are now resolved.
+	 */
+	private ownedIds = new Set<string>();
 
 	/** Object pool to prevent allocating FrameEntry objects every frame */
 	private framePool = new FramePool();
@@ -123,7 +145,10 @@ export class Runtime {
 
 	/**
 	 * Register the React re-render trigger. Called by createApp on mount.
-	 * Only one app instance is supported at a time.
+	 * Each Runtime instance supports exactly one registered trigger at a time
+	 * (one per createApp() root). Multiple Runtime instances -- i.e. multiple
+	 * createApp() roots on the same page -- are supported simultaneously and
+	 * are tracked in {@link mountedRuntimes}.
 	 */
 	registerApp(rerenderFn: () => void): void {
 		this.appMounted = true;
@@ -139,6 +164,7 @@ export class Runtime {
 		this.rerenderFn = null;
 		this.stateStore.clear();
 		this.idStack = [];
+		this.idPrefix = "";
 		this.collisionCounter.clear();
 		this.duplicateWarned.clear();
 		this.frameRoot.clear();
@@ -146,9 +172,14 @@ export class Runtime {
 		this.framePool.reset();
 		this.stateTTL.clear();
 		this.memoCache.clear();
+		this.memoTTL.clear();
+		this.memoKeysThisFrame.clear();
+		this.contextStack.clear();
 		this.scopeStack.length = 0;
+		this.focusedId = null;
 		this.drawing = false;
 		this.dirty = false;
+		this.ownedIds.clear();
 		mountedRuntimes.delete(this);
 	}
 
@@ -176,6 +207,7 @@ export class Runtime {
 		this.idStack.length = 0;
 		this.idPrefix = "";
 		this.contextStack.clear();
+		this.memoKeysThisFrame.clear();
 		this.dirty = false;
 	}
 
@@ -204,6 +236,10 @@ export class Runtime {
 			} else if (now > expiry) {
 				this.stateStore.delete(id);
 				this.stateTTL.delete(id);
+				if (this.focusedId === id) {
+					this.focusedId = null;
+				}
+				this.ownedIds.delete(id);
 			}
 		}
 
@@ -211,6 +247,26 @@ export class Runtime {
 		for (const id of currentIds) {
 			if (!this.stateTTL.has(id)) {
 				this.stateTTL.set(id, now + Runtime.GC_TTL_MS);
+			}
+		}
+
+		// TTL-based GC for memoBlock's subtree cache. Without this, memoBlock
+		// calls keyed by a dynamic id (e.g. a list item id inside pushId)
+		// accumulate in memoCache forever once that item is removed --
+		// captureSubtree/setMemo have no other eviction path, so a long-lived
+		// app with a changing list leaks one cache entry (deps + a cloned
+		// FrameEntry subtree) per removed item. Mirrors the stateStore GC above.
+		for (const [key, expiry] of this.memoTTL.entries()) {
+			if (this.memoKeysThisFrame.has(key)) {
+				this.memoTTL.set(key, now + Runtime.GC_TTL_MS);
+			} else if (now > expiry) {
+				this.memoCache.delete(key);
+				this.memoTTL.delete(key);
+			}
+		}
+		for (const key of this.memoKeysThisFrame) {
+			if (!this.memoTTL.has(key)) {
+				this.memoTTL.set(key, now + Runtime.GC_TTL_MS);
 			}
 		}
 
@@ -239,7 +295,14 @@ export class Runtime {
 	 */
 	getState<S>(id: string, defaultState: S, persistent: boolean = false): S {
 		if (!this.stateStore.has(id)) {
-			let initialState = structuredClone(defaultState);
+			let initialState: S;
+			try {
+				initialState = structuredClone(defaultState);
+			} catch (err) {
+				throw new Error(
+					errors.defaultStateCloneFailure(id, errors.getErrorMessage(err)),
+				);
+			}
 			if (persistent && this.storage) {
 				const stored = this.storage.get(id);
 				if (stored !== undefined && stored !== null) {
@@ -318,10 +381,32 @@ export class Runtime {
 				console.warn(errors.duplicateId(widgetName, displayLabel));
 				this.duplicateWarned.add(rawId);
 			}
-			return `${rawId}__${count + 1}`;
+			const collidedId = `${rawId}__${count + 1}`;
+			this.ownedIds.add(collidedId);
+			return collidedId;
 		}
 
+		this.ownedIds.add(rawId);
 		return rawId;
+	}
+
+	/**
+	 * Register a hand-constructed id (not produced by {@link buildId}) as
+	 * owned by this runtime, so code that looks up ownership by id (e.g.
+	 * `makeInteractive`'s focus/blur routing via {@link getRuntimeForId})
+	 * can resolve it. Intended for widgets that build compound sub-element
+	 * ids of their own (e.g. `${id}/tab/${tab}`) that don't correspond to a
+	 * separate widget instance and so never go through `buildId`.
+	 *
+	 * Idempotent -- safe to call every render.
+	 */
+	registerExternalId(id: string): void {
+		this.ownedIds.add(id);
+	}
+
+	/** Whether this runtime instance currently owns (has registered) `id`. */
+	ownsId(id: string): boolean {
+		return this.ownedIds.has(id);
 	}
 
 	// --- Environment Context Stack ---
@@ -408,7 +493,9 @@ export class Runtime {
 	 * or conflict with a user widget named "MemoBlock".
 	 */
 	buildMemoKey(id: string): string {
-		return `${this.idPrefix}__memo__/${id}`;
+		const key = `${this.idPrefix}__memo__/${id}`;
+		this.memoKeysThisFrame.add(key);
+		return key;
 	}
 
 	/**
@@ -423,23 +510,42 @@ export class Runtime {
 		}));
 	}
 
-	captureSubtree(drawClosure: () => void): FrameEntry[] {
+	captureSubtree(memoId: string, drawClosure: () => void): FrameEntry[] {
+		const scopeDepthBefore = this.scopeStack.length;
 		const parentChildren = this.getCurrentParentChildren();
 		const startIndex = parentChildren.length;
 
 		drawClosure();
 
-		const endIndex = parentChildren.length;
-		const captured = parentChildren.slice(startIndex, endIndex);
+		if (this.scopeStack.length !== scopeDepthBefore) {
+			console.error(errors.memoBlockUnbalancedScope(memoId));
+		}
+
+		// Re-fetch: if the closure left an extra scope open, parentChildren
+		// (captured before drawClosure ran) is no longer the array new entries
+		// were actually pushed into. This can't fully recover a correct
+		// capture, but it avoids silently slicing the wrong array.
+		const currentParentChildren = this.getCurrentParentChildren();
+		const captured =
+			currentParentChildren === parentChildren
+				? parentChildren.slice(startIndex, currentParentChildren.length)
+				: [];
 
 		return this.cloneSubtree(captured);
 	}
 
+	/**
+	 * Push a previously-captured, cloned subtree into the current frame.
+	 *
+	 * These entries are plain (non-pooled) objects created once by
+	 * {@link captureSubtree} and never mutated afterward by anything in the
+	 * runtime (render/consume only read FrameEntry fields), so they're safe
+	 * to reuse by reference across every frame that hits the memo cache --
+	 * no extra clone needed here.
+	 */
 	pushCachedSubtree(subtree: FrameEntry[]): void {
 		const parentChildren = this.getCurrentParentChildren();
-		// We clone again when pushing to ensure the cache remains pristine
-		// and isolated from any unexpected mutations, though technically read-only.
-		parentChildren.push(...this.cloneSubtree(subtree));
+		parentChildren.push(...subtree);
 	}
 
 	// --- Focus Management ---
@@ -453,6 +559,10 @@ export class Runtime {
 
 	isFocused(id: string): boolean {
 		return this.focusedId === id;
+	}
+
+	getFocusedId(): string | null {
+		return this.focusedId;
 	}
 
 	// --- DevTools Inspector ---
@@ -587,7 +697,15 @@ export class Runtime {
 			if (entry.consumeStateFn) {
 				const currentState = this.stateStore.get(entry.id);
 				if (currentState !== undefined) {
-					this.stateStore.set(entry.id, entry.consumeStateFn(currentState));
+					const nextState = entry.consumeStateFn(currentState);
+					this.stateStore.set(entry.id, nextState);
+					// setState() writes through to storage for persistent widgets;
+					// this automatic per-frame reset must do the same, or a
+					// persistent widget's saved value silently drifts from what's
+					// actually in memory every time its consumeState fires.
+					if (entry.persistent && this.storage) {
+						this.storage.set(entry.id, nextState);
+					}
 				}
 			}
 			this.consumeEntries(entry.children);
@@ -623,6 +741,53 @@ let activeRuntime: Runtime | null = null;
  */
 export const mountedRuntimes = new Set<Runtime>();
 
+/** Ids for which a cross-runtime collision warning has already been logged. */
+const crossRuntimeCollisionWarned = new Set<string>();
+
+/**
+ * Look up which Runtime instance owns a given composite widget id, if any.
+ * Returns undefined if the id is unknown to every mounted runtime, or has
+ * been garbage-collected.
+ *
+ * Used by code that needs to act on "the widget with this id" (e.g. focus
+ * management) without broadcasting to every mounted runtime on the page,
+ * which would be both wasteful and incorrect if two separate apps ever
+ * happen to produce the same composite id.
+ *
+ * Ownership is tracked per-runtime (see `Runtime#ownedIds`), not in a single
+ * shared map, so one runtime can never silently overwrite another's
+ * ownership record. Because id composition is purely content-based (with no
+ * per-runtime namespace), it *is* still possible -- if unlikely -- for two
+ * independent `createApp()` roots to legitimately produce the same
+ * composite id. In that rare case this function logs a one-time warning
+ * (rather than silently picking a "winner") and returns the first match, so
+ * routing degrades explicitly instead of failing silently.
+ *
+ * @internal
+ */
+export function getRuntimeForId(id: string): Runtime | undefined {
+	let match: Runtime | undefined;
+	for (const runtime of mountedRuntimes) {
+		if (runtime.ownsId(id)) {
+			if (match === undefined) {
+				match = runtime;
+			} else {
+				if (!crossRuntimeCollisionWarned.has(id)) {
+					crossRuntimeCollisionWarned.add(id);
+					console.warn(
+						`[ism] Multiple mounted apps produced the same widget id ('${id}'). ` +
+							"Ids are only guaranteed unique within a single createApp() root -- " +
+							"routing (e.g. focus tracking) for this id is ambiguous and will " +
+							"resolve to whichever app happened to be checked first.",
+					);
+				}
+				break;
+			}
+		}
+	}
+	return match;
+}
+
 // Expose devtools hook
 if (typeof window !== "undefined") {
 	const win = window as unknown as Record<string, unknown>;
@@ -641,6 +806,21 @@ export function getActiveRuntime(): Runtime {
 	if (!activeRuntime) {
 		throw new Error(errors.noActiveRuntime());
 	}
+	return activeRuntime;
+}
+
+/**
+ * Like {@link getActiveRuntime}, but returns `null` instead of throwing
+ * when no runtime is currently active (e.g. outside any draw pass).
+ *
+ * Used by API functions that have a legitimate reason to be called outside
+ * a draw pass -- from a DOM event handler or an async callback -- and need
+ * to fall back to some other strategy (routing by id ownership, or
+ * broadcasting to every mounted runtime) instead of failing outright.
+ *
+ * @internal
+ */
+export function getActiveRuntimeOrNull(): Runtime | null {
 	return activeRuntime;
 }
 

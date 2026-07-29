@@ -37,8 +37,9 @@
  * ## Stability guarantee
  *
  * See `STABILITY.md` in the repository root. The public API listed below
- * is stable from v1.0.0. New behavior is always additive -- new optional
- * parameters or new functions. Existing signatures never change.
+ * is stable from v3.2.0 onwards. New behavior is always additive -- new
+ * optional parameters or new functions. Existing signatures never change.
+ * (Versions prior to 3.2.0 predate this guarantee; see the changelog.)
  *
  * @since 1.0.0
  */
@@ -64,7 +65,12 @@ export type {
 // providing a flat API surface for user draw functions.
 
 import * as errors from "./errors";
-import { getActiveRuntime, mountedRuntimes } from "./runtime";
+import {
+	getActiveRuntime,
+	getActiveRuntimeOrNull,
+	getRuntimeForId,
+	mountedRuntimes,
+} from "./runtime";
 
 /**
  * Push an ID segment onto the stack.
@@ -223,7 +229,7 @@ export function memoBlock(
 		// We push an ID segment so that any widgets created inside the closure
 		// get stable IDs relative to this memo block.
 		runtime.pushIdSegment(id);
-		const subtree = runtime.captureSubtree(drawClosure);
+		const subtree = runtime.captureSubtree(id, drawClosure);
 		runtime.popIdSegment();
 
 		runtime.setMemo(memoId, deps, subtree);
@@ -233,21 +239,70 @@ export function memoBlock(
 /**
  * Request focus for a specific widget ID.
  *
+ * Unlike most functions in this file, `setFocus` may be called outside of
+ * a draw pass -- its primary real-world trigger is a DOM `focus`/`blur`
+ * event or an async callback (e.g. focusing a newly created item after data
+ * loads), neither of which happen during drawing. Resolution order:
+ *
+ * 1. If a runtime is currently active (mid draw pass), use it.
+ * 2. Otherwise, if `id` is already owned by a mounted runtime, use that one.
+ * 3. Otherwise (unknown/not-yet-drawn id, or clearing focus with `null`),
+ *    apply to every mounted runtime, mirroring `markDirty()`.
+ *
  * @since 2.0.0
  */
 export function setFocus(id: string | null): void {
-	const runtime = getActiveRuntime();
-	runtime.setFocus(id);
+	const active = getActiveRuntimeOrNull();
+	if (active) {
+		active.setFocus(id);
+		return;
+	}
+
+	const owner = id !== null ? getRuntimeForId(id) : undefined;
+	if (owner) {
+		owner.setFocus(id);
+		return;
+	}
+
+	for (const runtime of mountedRuntimes) {
+		runtime.setFocus(id);
+	}
 }
 
 /**
  * Check if a specific widget ID currently has focus.
  *
+ * Follows the same outside-draw-pass resolution order as {@link setFocus}:
+ * the active runtime if one exists, else the runtime that owns `id`, else
+ * every mounted runtime.
+ *
  * @since 2.0.0
  */
 export function isFocused(id: string): boolean {
+	const active = getActiveRuntimeOrNull();
+	if (active) return active.isFocused(id);
+
+	const owner = getRuntimeForId(id);
+	if (owner) return owner.isFocused(id);
+
+	for (const runtime of mountedRuntimes) {
+		if (runtime.isFocused(id)) return true;
+	}
+	return false;
+}
+
+/**
+ * Get the currently focused widget ID, if any.
+ *
+ * Unlike `setFocus`/`isFocused`, this has no `id` to route by, so it can
+ * only be resolved unambiguously against the currently active runtime --
+ * call it from within a draw pass.
+ *
+ * @since 3.3.0
+ */
+export function getFocusedId(): string | null {
 	const runtime = getActiveRuntime();
-	return runtime.isFocused(id);
+	return runtime.getFocusedId();
 }
 
 /**
