@@ -8,11 +8,11 @@ import {
 	defineConfig,
 } from "../config";
 
-// schema.json lives at the repo root and is hand-maintained rather than
-// generated from config.ts. This test is the drift detector: if someone
-// changes DEFAULT_LAYER_Z_INDEX / DEFAULT_SHOW_DEV_TOOLS in config.ts
-// without updating schema.json's "default" fields (and its description
-// prose) to match, this fails instead of the two silently diverging.
+// The schema is maintained separately from the TypeScript config.
+// These assertions catch default values drifting between the two files.
+// Both sources need to agree before the test can pass.
+// This includes the values used by the CLI scaffold.
+// Keeping the check here avoids silent editor schema drift.
 const here = dirname(fileURLToPath(import.meta.url));
 const schemaPath = join(here, "..", "..", "schema.json");
 const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
@@ -46,7 +46,7 @@ describe("defineConfig", () => {
 	});
 
 	it("throws for a non-boolean showDevTools", () => {
-		// @ts-expect-error  intentionally invalid at runtime
+		// @ts-expect-error This invalid value is tested at runtime.
 		expect(() => defineConfig({ showDevTools: "yes" })).toThrow("showDevTools");
 	});
 });

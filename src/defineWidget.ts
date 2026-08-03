@@ -7,7 +7,7 @@ import type {
 	WidgetRenderProps,
 } from "./types";
 
-// --- Name validation ---
+// Widget name rules
 
 const INVALID_NAME_CHARS = /[/#\s]/;
 
@@ -81,7 +81,7 @@ function assertStructuredState(
 	}
 }
 
-// --- widgetProps factory ---
+// Shared widget props
 
 function populateWidgetProps<A extends unknown[]>(
 	props: WidgetProps,
@@ -117,25 +117,18 @@ function populateWidgetProps<A extends unknown[]>(
 }
 
 /**
- * Define a new widget type and return its callable function.
+ * Define a widget type and return the function used during a draw pass.
  *
- * This is the **only** registration path for widgets. Every widget in the
- * system  including those in this library  goes through this function.
- * Do not call runtime internals directly.
+ * Every call creates a frame entry with a stable ID, reads the current state,
+ * builds the common DOM props, and returns the value from `getReturnValue`.
+ * Scoped widgets stay open until {@link end} is called.
  *
- * The returned function is what end users call inside their draw function
- * (e.g., `Button("Click me")`, `Slider("Volume", 0, 100)`).
+ * @typeParam S Widget state.
+ * @typeParam A Widget argument tuple.
+ * @typeParam R Value returned by the widget call.
  *
- * Each call during a draw pass:
- * 1. Resolves a stable composite ID from the label + ID stack
- * 2. Looks up or initializes persistent state
- * 3. Builds `widgetProps` (styling hook + ARIA attributes)
- * 4. Registers a FrameEntry in the current frame buffer
- * 5. Returns the value computed by `getReturnValue`
- *
- * @typeParam S - The shape of this widget's persistent state
- * @typeParam A - Tuple type of the arguments the widget function accepts
- * @typeParam R - The return type of the widget function
+ * @param config Widget definition.
+ * @returns A callable widget function.
  *
  * @since 1.0.0
  *
@@ -145,15 +138,16 @@ function populateWidgetProps<A extends unknown[]>(
  *   name: "Button",
  *   defaultState: { clicked: false },
  *   a11y: { role: "button", label: ([label]) => label },
- *   render: ({ id, state, setState, args, widgetProps }) => {
- *     const [label] = args;
- *     return createElement("button", {
- *       key: id,
- *       ...widgetProps,
- *       tabIndex: 0,
- *       onClick: () => setState({ clicked: true }),
- *     }, extractDisplayLabel(label));
- *   },
+ *   render: ({ id, args, setState, widgetProps }) =>
+ *     createElement(
+ *       "button",
+ *       {
+ *         key: id,
+ *         ...widgetProps,
+ *         onClick: () => setState({ clicked: true }),
+ *       },
+ *       args[0],
+ *     ),
  *   getReturnValue: (state) => state.clicked,
  *   consumeState: (state) => ({ ...state, clicked: false }),
  * });

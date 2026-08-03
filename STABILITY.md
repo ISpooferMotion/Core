@@ -1,25 +1,35 @@
-# Stability Guarantee
+# API stability
 
-**@ispoofermotion/core** provides a strict API stability guarantee for all exported functions, classes, and types, **effective from version `3.2.0` onwards** (the version this guarantee was introduced).
+The public API of `@ispoofermotion/core` is covered by this policy starting with version `3.2.0`.
 
-## Public API Stability
+## What counts as public
 
-The public API is defined as any symbol exported from the main package entrypoint (`@ispoofermotion/core`).
+A function, class, constant, or type is public when it is exported from the main package entry point.
 
-We adhere to the following rules to ensure backward compatibility:
+Files inside `src`, internal runtime methods, and symbols marked with `@internal` are not public API.
 
-1. **Additive Changes Only:** New behavior will only be introduced additively. We may add new functions, new exported types, or new *optional* parameters to existing functions.
-2. **Signature Preservation:** Existing function and method signatures will not be changed incompatibly in patch releases. Minor releases may include narrowly scoped type corrections that preserve runtime behavior and are documented in the changelog.
-3. **Behavioral Consistency:** The core behavior and side effects of existing functions will remain consistent. If a fundamental behavioral shift is required, it will be introduced as a new function or heavily communicated as a major version bump.
+## Patch releases
 
-## Deprecation Policy
+Patch releases keep existing public runtime behavior and compatible function signatures. They may include bug fixes, documentation updates, performance work, and internal refactors.
 
-When an API is slated for removal or replacement:
+## Minor releases
 
-- It will be marked with the `@deprecated` JSDoc tag.
-- It will continue to function exactly as before for the duration of the current major version.
-- It will only be removed in the next major version release.
+Minor releases may add exports, optional configuration, and other backward compatible behavior.
 
-## Internal APIs
+A minor release may also correct a public TypeScript type when runtime behavior does not change and the old type allowed invalid usage. Any correction like this must be explained in the changelog.
 
-Any functions, variables, or types that are not exported from the main entrypoint (or are marked explicitly with `@internal`) are **not** covered by this guarantee. They may change structure or be removed entirely at any time, even in patch releases. Please do not rely on internal APIs.
+## Major releases
+
+A change that intentionally breaks supported public usage requires a new major version.
+
+## Deprecations
+
+An API planned for removal will be marked with `@deprecated` and will keep working for the rest of the current major version. Removal happens in a later major version.
+
+## Internal code
+
+Internal code can change in any release. Do not import files from `src` or depend on undocumented runtime details.
+
+## Release notes
+
+The changelog records public changes and any compatibility details that need more explanation.

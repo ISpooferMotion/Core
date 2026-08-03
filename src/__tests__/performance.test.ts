@@ -9,18 +9,14 @@ beforeEach(() => {
 });
 
 /**
- * Run `fn` a few times and return the median duration in milliseconds.
+ * Run a small sample and return its median duration in milliseconds.
  *
- * A single wall-clock measurement on a shared CI runner is noisy (GC
- * pauses, CPU contention, and  on the very first call  the JIT hasn't
- * optimized the hot path yet). Discarding a warm-up run and taking the
- * median of several timed runs smooths out that noise without requiring a
- * dedicated benchmarking harness. This is a regression smoke test, not a
- * precise micro-benchmark: it's meant to catch "someone accidentally made
- * the hot path quadratic," not to enforce a strict per-millisecond budget.
+ * Shared CI machines are noisy, so the first run is used for warmup and the
+ * median is less affected by a random pause. This test only catches major
+ * regressions such as accidentally making the hot path quadratic.
  */
 function medianDurationMs(fn: () => void, runs = 5): number {
-	// Warm-up: let the JIT optimize the hot path before any timed run.
+	// Warm up the JIT before collecting timings.
 	fn();
 
 	const durations: number[] = [];
@@ -61,10 +57,10 @@ describe("500-widget performance budget", () => {
 		};
 
 		const median = medianDurationMs(drawFrame);
-		// Generous on purpose  this is a smoke test for gross regressions
-		// (e.g. an accidental O(n^2) path), not a tight perf gate. A single
-		// frame of 500 trivial widgets should never approach 100ms even on a
-		// slow, contended CI runner; a real regression would blow well past it.
+		// The limit is intentionally loose.
+		// This catches obvious complexity regressions without making CI flaky.
+		// Five hundred simple widgets should stay far below the limit.
+		// A real regression will miss it by a large margin.
 		expect(median).toBeLessThan(100);
 	});
 

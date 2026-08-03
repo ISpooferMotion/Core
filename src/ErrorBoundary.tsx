@@ -3,7 +3,7 @@ import { Component, createElement } from "react";
 
 interface Props {
 	children: ReactNode;
-	/** Optional callback fired when an error is caught. */
+	/** Called after the boundary catches a render error. */
 	onError?: (error: Error, info: ErrorInfo) => void;
 }
 
@@ -13,38 +13,27 @@ interface State {
 }
 
 /**
- * React error boundary for `@ispoofermotion/core` applications.
+ * React error boundary used by `@ispoofermotion/core` apps.
  *
- * Wraps the immediate-mode app component and catches any uncaught errors
- * thrown during React's render phase (e.g., from a widget's `render` function).
- * Displays a styled plain-English error message instead of a blank screen.
- *
- * `createApp()` wraps its returned component in this boundary automatically.
- * You can also use it directly to wrap subsections of your UI.
+ * It catches errors thrown while React renders widgets and replaces the broken
+ * tree with {@link ErrorFallback}. `createApp` adds this boundary automatically,
+ * but it can also wrap a smaller part of an app.
  *
  * @since 1.0.0
  *
  * @example
  * ```tsx
- * import { ISMCoreErrorBoundary } from "@ispoofermotion/core";
- *
  * createRoot(root).render(
- *   createElement(ISMCoreErrorBoundary, { onError: (e) => reportError(e) },
- *     createElement(App)
- *   )
+ *   createElement(
+ *     ISMCoreErrorBoundary,
+ *     { onError: (error) => reportError(error) },
+ *     createElement(App),
+ *   ),
  * );
  * ```
  */
 
-/**
- * Static style objects for {@link ErrorFallback}.
- *
- * Hoisted to module scope rather than allocated inline on every render
- * `ErrorFallback` only renders on error, so the perf impact of re-allocating
- * these was always negligible, but keeping them inline was inconsistent with
- * the rest of the codebase's general "don't reallocate static style/data"
- * instinct (see `DEFAULT_ACTIVATION_KEYS` in `makeInteractive.ts`).
- */
+/** Shared styles for {@link ErrorFallback}. */
 const fallbackStyles = {
 	container: {
 		display: "flex",
@@ -141,8 +130,7 @@ const fallbackStyles = {
 } satisfies Record<string, CSSProperties>;
 
 /**
- * A styled fallback UI for displaying errors caught by `ISMCoreErrorBoundary`
- * or `createApp`'s internal draw pass.
+ * Render the error panel used for draw and widget render failures.
  *
  * @since 3.2.0
  */
@@ -156,9 +144,9 @@ export function ErrorFallback({
 	title: string;
 	error: Error | string;
 	info?: ErrorInfo;
-	/** Which tip list to show. Explicit rather than inferred from `title`. */
+	/** Select the tips shown for this error source. */
 	kind?: "render" | "draw";
-	/** If provided, shows a "Try again" button that calls this to recover. */
+	/** Show a retry button when a recovery callback is available. */
 	onRetry?: () => void;
 }): ReactNode {
 	const errorMessage = error instanceof Error ? error.message : String(error);
@@ -284,9 +272,8 @@ export class ISMCoreErrorBoundary extends Component<Props, State> {
 	};
 
 	/**
-	 * Clear the caught error and let children render again.
-	 * Bound as an instance property so it can be passed directly as a
-	 * React event handler / onRetry callback without rebinding.
+	 * Clear the saved error so React can try rendering the children again.
+	 * This is an instance field so it can be passed as a callback directly.
 	 */
 	private resetError = (): void => {
 		this.setState({ error: null, info: null });
@@ -306,7 +293,5 @@ export class ISMCoreErrorBoundary extends Component<Props, State> {
 	}
 }
 
-/**
- * @deprecated Since 3.0.0. Use `ISMCoreErrorBoundary` instead.
- */
+/** @deprecated Since 3.0.0. Use `ISMCoreErrorBoundary`. */
 export { ISMCoreErrorBoundary as ISMLibErrorBoundary };

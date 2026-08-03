@@ -78,8 +78,8 @@ describe("DevTools", () => {
 		const tablist = container.querySelector('[role="tablist"]');
 		expect(tablist).not.toBeNull();
 		expect(container.querySelectorAll('[role="tab"]').length).toBe(2);
-		// Elements tab is active by default; the Elements tab's own live-tree
-		// snapshot should mention the widget drawn by the host app.
+		// The Elements tab starts active.
+		// Its snapshot should include the widget drawn by the host app.
 		expect(container.textContent).toContain("Button");
 	});
 

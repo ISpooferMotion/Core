@@ -17,9 +17,9 @@ import { getActiveRuntimeOrNull, Runtime, withRuntime } from "./runtime";
 import type { FrameEntry, StorageAdapter } from "./types";
 
 /**
- * Render a single FrameEntry to a React element.
- * Retrieves the widget's current state, creates a setState callback,
- * recursively renders children, and calls the entry's render closure.
+ * Render one frame entry and its children.
+ *
+ * @internal
  */
 function renderEntry(runtime: Runtime, entry: FrameEntry): ReactNode {
 	const setState = (updater: unknown) => {
@@ -79,8 +79,10 @@ function renderEntry(runtime: Runtime, entry: FrameEntry): ReactNode {
 }
 
 /**
- * Render the full frame buffer to a React element tree.
- * Each entry is wrapped in a keyed Fragment for stable reconciliation.
+ * Convert the frame buffer into a React tree.
+ * Named layers are wrapped separately so their z index can be applied.
+ *
+ * @internal
  */
 function renderFrameBuffer(
 	runtime: Runtime,
@@ -128,16 +130,11 @@ function renderFrameBuffer(
 }
 
 /**
- * Read a React Context from within the function you pass to `createApp()`.
+ * Read a React context from the draw function passed to `createApp`.
  *
- * This is a direct passthrough to `useContext`  it adds no special
- * handling for the immediate-mode draw loop. Because your draw function
- * runs synchronously inside `ISMCore`'s render body, calling this remains
- * fully subject to the Rules of Hooks: call it unconditionally, on every
- * frame, in the same order. Calling it inside an `if` branch (very natural
- * in immediate-mode code, e.g. inside `if (Button("x")) { ... }`) will
- * produce the same "Rendered more hooks than during the previous render"
- * error as misusing any other hook.
+ * This calls React's `useContext` directly, so the normal Rules of Hooks still
+ * apply. Call it on every frame and in the same order. Do not place it inside
+ * a condition or inside `memoBlock`, since a memo cache hit can skip the call.
  */
 export function useReactContext<T>(context: React.Context<T>): T {
 	const runtime = getActiveRuntimeOrNull();
@@ -148,30 +145,28 @@ export function useReactContext<T>(context: React.Context<T>): T {
 }
 
 /**
- * Options for createApp.
+ * Options accepted by {@link createApp}.
+ *
  * @since 3.2.0
  */
 export interface AppOptions extends IsmConfig {
-	/** Optional persistence adapter used by widgets with `persistent: true`. */
+	/** Synchronous storage used by widgets with `persistent: true`. */
 	storage?: StorageAdapter;
 }
 
 /**
- * Create the root React component for an immediate-mode app.
+ * Create the React component that runs an immediate mode draw function.
  *
- * Takes a draw function that describes the entire UI through widget calls.
- * Returns a standard `React.FC` wrapped in an `ISMCoreErrorBoundary` that
- * shows a friendly message instead of a blank screen on error.
+ * Each render starts a frame, calls `drawFn`, closes the frame, and converts
+ * the recorded widgets into React elements. The returned component owns its
+ * runtime and clears that runtime when it unmounts.
  *
- * The returned component:
- * 1. Registers a re-render trigger with the runtime on mount
- * 2. Runs `beginFrame` → `drawFn` → `endFrame` on each render (the "draw pass")
- * 3. Converts the frame buffer to React elements (the "commit")
- * 4. Consumes one-shot widget state during the draw pass
- * 5. Cleans up all runtime state on unmount
+ * Widget calls belong inside `drawFn`. `useReactContext` is the only supported
+ * React hook in that function, and it must follow the normal Rules of Hooks.
  *
- * @param drawFn - Pure function describing the UI for one frame.
- *   Call widget functions here. JSX is not used; `useReactContext` is the only supported React hook and must follow the Rules of Hooks.
+ * @param drawFn Function that describes one UI frame.
+ * @param options Runtime configuration and optional storage.
+ * @returns A React component ready to mount.
  *
  * @since 1.0.0
  *
@@ -183,14 +178,12 @@ export interface AppOptions extends IsmConfig {
  * let count = 0;
  *
  * const App = createApp(() => {
- *   Text("Count: " + count);
+ *   Text(`Count: ${count}`);
  *   if (Button("Increment")) {
- *     count++;
+ *     count += 1;
  *     markDirty();
  *   }
  * });
- *
- * createRoot(document.getElementById("root")!).render(createElement(App));
  * ```
  */
 
@@ -199,14 +192,14 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 	const storage = options?.storage;
 
 	function ISMCore() {
-		// Create a unique runtime instance for this app root
+		// Keep one runtime for the lifetime of this app root.
 		const runtime = useMemo(() => new Runtime(storage), []);
 
-		// Force re-render by incrementing a counter.
-		// This is the only React state in the entire system.
+		// React state is only used to request another frame.
+		// The counter value itself is not used.
 		const [, forceRender] = useReducer((x: number) => x + 1, 0);
 
-		// Register the re-render trigger on mount, clean up on unmount
+		// Connect the runtime to React while this component is mounted.
 		useEffect(() => {
 			runtime.registerApp(forceRender);
 			return () => {
@@ -214,9 +207,9 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 			};
 		}, [runtime]);
 
-		// Run the draw pass: describe this frame as pure data.
-		// withRuntime restores the previous active runtime on exit,
-		// even if drawFn or endFrame throws; prevents a leaked global.
+		// Record the current frame as plain runtime data.
+		// withRuntime always restores the previous active runtime.
+		// This also happens when drawing or frame cleanup throws.
 		let drawError: Error | null = null;
 
 		withRuntime(runtime, () => {
@@ -233,7 +226,7 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 			runtime.endFrame();
 		});
 
-		// If the draw function threw, show a friendly error
+		// Draw errors are shown inside the app instead of leaving an empty root.
 		if (drawError) {
 			return createElement(ErrorFallback, {
 				title: "Draw function error",
@@ -243,7 +236,7 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 			});
 		}
 
-		// Convert frame buffer to React elements
+		// Turn the recorded frame into React elements.
 		const frameBuffer = runtime.getFrameBuffer();
 		const zIndex = config.layerZIndex;
 		const renderedFrame = withRuntime(runtime, () =>
@@ -254,8 +247,8 @@ export function createApp(drawFn: () => void, options?: AppOptions): React.FC {
 
 	ISMCore.displayName = "ISMCore";
 
-	// Wrap in an error boundary so uncaught errors from widget render functions
-	// show a friendly message instead of a blank screen.
+	// Widget render errors are handled separately by the React boundary.
+	// The boundary keeps a render failure from replacing the whole page.
 	function ISMCoreApp() {
 		return createElement(ISMCoreErrorBoundary, null, createElement(ISMCore));
 	}

@@ -13,7 +13,7 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-// --- Name validation ---
+// Widget name validation
 
 describe("defineWidget name validation", () => {
 	it("throws for an empty name", () => {
@@ -116,7 +116,7 @@ describe("defineWidget name validation", () => {
 	});
 });
 
-// --- Outside-draw guard ---
+// Calls outside a draw pass
 
 describe("widget outside draw guard", () => {
 	it("throws when called outside a draw pass", () => {
@@ -131,7 +131,7 @@ describe("widget outside draw guard", () => {
 	});
 });
 
-// --- Conditional rendering ---
+// Conditional widgets
 
 describe("conditional widgets", () => {
 	it("preserves state when a widget is absent for one frame then returns", () => {
@@ -146,19 +146,19 @@ describe("conditional widgets", () => {
 			getReturnValue: (s) => s.n,
 		});
 
-		// Frame 1: counter present, state becomes 999 via render (but render runs later)
+		// Frame 1 records the widget before its render callback updates state.
 		runtime.beginFrame();
 		Counter();
 		runtime.endFrame();
 
-		// Manually set state to simulate a value set during render
+		// Set the value directly to match a later render update.
 		runtime.setState("Counter/Counter", { n: 42 });
 
-		// Frame 2: counter absent
+		// Frame 2 omits the widget.
 		runtime.beginFrame();
 		runtime.endFrame();
 
-		// Frame 3: counter present again
+		// Frame 3 adds the widget again.
 		runtime.beginFrame();
 		const val = Counter();
 		runtime.endFrame();
@@ -168,7 +168,7 @@ describe("conditional widgets", () => {
 		runtime.beginFrame();
 		runtime.endFrame();
 
-		// State is preserved because it was only absent for 1 frame (TTL not reached)
+		// One missing frame is shorter than the state cleanup timeout.
 		expect(val).toBe(42);
 	});
 
@@ -187,7 +187,7 @@ describe("conditional widgets", () => {
 		runtime.endFrame();
 		runtime.setState("Counter2/Counter2", { n: 7 });
 
-		// Frame 2: still present
+		// Frame 2 keeps the widget alive.
 		runtime.beginFrame();
 		const val = Counter();
 		runtime.endFrame();
@@ -196,7 +196,7 @@ describe("conditional widgets", () => {
 	});
 });
 
-// --- Transient state consumption ---
+// Temporary state consumption
 
 describe("consumeState", () => {
 	it("preserves an explicit undefined consumed value", () => {
@@ -223,7 +223,7 @@ describe("consumeState", () => {
 	});
 });
 
-// --- Loop widgets ---
+// Widgets created in loops
 
 describe("loop widgets with changing counts", () => {
 	it("assigns unique IDs to each iteration via pushId", () => {
@@ -238,7 +238,7 @@ describe("loop widgets with changing counts", () => {
 		}
 		runtime.endFrame();
 
-		// Each ID must be unique
+		// Every loop item needs a different ID.
 		const unique = new Set(ids);
 		expect(unique.size).toBe(5);
 	});
@@ -253,7 +253,7 @@ describe("loop widgets with changing counts", () => {
 			getReturnValue: (s) => s.val,
 		});
 
-		// Frame 1: 3 iterations
+		// Frame 1 has three items.
 		runtime.beginFrame();
 		for (let i = 0; i < 3; i++) {
 			runtime.pushIdSegment(`row-${i}`);
@@ -262,7 +262,7 @@ describe("loop widgets with changing counts", () => {
 		}
 		runtime.endFrame();
 
-		// Frame 2: 2 iterations (one less)
+		// Frame 2 removes one item.
 		runtime.beginFrame();
 		const results: number[] = [];
 		for (let i = 0; i < 2; i++) {
@@ -272,12 +272,12 @@ describe("loop widgets with changing counts", () => {
 		}
 		runtime.endFrame();
 
-		// All values should be the default (0); no bleed from previous frame's state
+		// Reused slots must still start with the default state.
 		expect(results).toEqual([0, 0]);
 	});
 });
 
-// --- widgetProps injection ---
+// widgetProps
 
 describe("widgetProps", () => {
 	it("injects data-ism-widget and class names", () => {
@@ -298,7 +298,7 @@ describe("widgetProps", () => {
 		W();
 		runtime.endFrame();
 
-		// Invoke the render fn directly on the frame entry to capture widgetProps
+		// Call the saved render function to inspect the generated props.
 		const entries = runtime.getFrameBuffer().get("default")!;
 		const entry = entries[0]!;
 		entry.renderFn({

@@ -1,20 +1,11 @@
 const PREFIX = "[ism]";
 
-/**
- * Normalize a caught value (which TypeScript types as `unknown`, since
- * JavaScript allows throwing anything) into a display-ready message string.
- *
- * Centralizes the `err instanceof Error ? err.message : String(err)`
- * pattern that was previously duplicated across `cli.ts`, `DevTools.ts`,
- * and `runtime.ts`.
- */
+/** Convert any caught value into a readable error message. */
 export function getErrorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * Widget called outside of a draw function.
- */
+/** A widget was called outside a draw pass. */
 export function widgetOutsideDraw(
 	widgetName: string,
 	label: string | undefined,
@@ -26,9 +17,7 @@ export function widgetOutsideDraw(
 	);
 }
 
-/**
- * end() called with no open scope to close.
- */
+/** `end` was called without an open scope. */
 export function endWithoutScope(): string {
 	return (
 		`${PREFIX} end() was called but there's no open section to close. ` +
@@ -36,9 +25,7 @@ export function endWithoutScope(): string {
 	);
 }
 
-/**
- * Frame ended with unclosed scoped widgets.
- */
+/** A frame finished with scopes still open. */
 export function unclosedScopes(names: string[]): string {
 	const list = names.map((n) => `'${n}'`).join(", ");
 	return (
@@ -47,9 +34,7 @@ export function unclosedScopes(names: string[]): string {
 	);
 }
 
-/**
- * Two widgets with the same label in the same scope (auto-resolved, warning only).
- */
+/** Two widgets produced the same base ID in one scope. */
 export function duplicateId(widgetName: string, displayLabel: string): string {
 	return (
 		`${PREFIX} Two widgets with label '${displayLabel}' in the same scope. ` +
@@ -58,30 +43,22 @@ export function duplicateId(widgetName: string, displayLabel: string): string {
 	);
 }
 
-/**
- * end() called outside of a draw function.
- */
+/** `end` was called outside a draw pass. */
 export function endOutsideDraw(): string {
 	return `${PREFIX} end() was called outside of a draw function. It can only be used inside the function you pass to createApp().`;
 }
 
-/**
- * pushId/popId called outside of a draw function.
- */
+/** An ID stack function was called outside a draw pass. */
 export function idStackOutsideDraw(fnName: string): string {
 	return `${PREFIX} ${fnName}() was called outside of a draw function. It can only be used inside the function you pass to createApp().`;
 }
 
-/**
- * popId() called with an empty ID stack.
- */
+/** `popId` was called while the ID stack was empty. */
 export function popIdEmpty(): string {
 	return `${PREFIX} popId() called but the ID stack is empty. Make sure every pushId() has a matching popId().`;
 }
 
-/**
- * defineWidget() called with an invalid widget name.
- */
+/** A widget name is empty or contains a reserved character. */
 export function invalidWidgetName(name: string, reason: string): string {
 	return (
 		`${PREFIX} defineWidget() received an invalid widget name: ${JSON.stringify(name)}. ${reason} ` +
@@ -89,9 +66,7 @@ export function invalidWidgetName(name: string, reason: string): string {
 	);
 }
 
-/**
- * defineWidget() called with a function as defaultState.
- */
+/** A widget used a function as its default state. */
 export function invalidDefaultState(widgetName: string): string {
 	return (
 		`${PREFIX} defineWidget("${widgetName}") has a function as its defaultState. ` +
@@ -100,10 +75,7 @@ export function invalidDefaultState(widgetName: string): string {
 	);
 }
 
-/**
- * A widget or API function was called outside of a drawing frame
- * (activeRuntime is null).
- */
+/** A runtime API was called without an active runtime. */
 export function noActiveRuntime(): string {
 	return (
 		`${PREFIX} A widget was called but no drawing frame is active. ` +
@@ -111,9 +83,7 @@ export function noActiveRuntime(): string {
 	);
 }
 
-/**
- * popContext() called with no matching push.
- */
+/** `popContext` was called without a matching value. */
 export function unbalancedPopContext(key: string): string {
 	return (
 		`${PREFIX} Unbalanced popContext for key '${key}'. ` +
@@ -121,9 +91,7 @@ export function unbalancedPopContext(key: string): string {
 	);
 }
 
-/**
- * popLayer() called when only the default layer is on the stack.
- */
+/** `popLayer` tried to remove the default layer. */
 export function popDefaultLayer(): string {
 	return (
 		`${PREFIX} Cannot pop the default layer. ` +
@@ -132,10 +100,8 @@ export function popDefaultLayer(): string {
 }
 
 /**
- * defaultState failed structuredClone() at defineWidget() time (a nested
- * function, class instance, DOM node, Symbol, etc). Caught here  rather
- * than only at the first widget call, deep inside a user's app  so the
- * failure surfaces immediately when the widget is defined.
+ * The widget default state cannot be cloned safely.
+ * This check runs when the widget is defined so the error appears early.
  */
 export function defaultStateNotCloneable(
 	widgetName: string,
@@ -149,9 +115,7 @@ export function defaultStateNotCloneable(
 	);
 }
 
-/**
- * structuredClone(defaultState) failed for a given widget instance id.
- */
+/** A widget state could not be cloned for a specific instance. */
 export function defaultStateCloneFailure(id: string, message: string): string {
 	return (
 		`${PREFIX} Failed to initialize state for widget '${id}': ${message} ` +
@@ -161,10 +125,7 @@ export function defaultStateCloneFailure(id: string, message: string): string {
 	);
 }
 
-/**
- * memoBlock's drawClosure left scopes open (or closed extra ones), so the
- * captured subtree cannot be trusted.
- */
+/** A memo closure changed the scope depth while its subtree was captured. */
 export function memoBlockUnbalancedState(id: string): string {
 	return (
 		`${PREFIX} memoBlock('${id}') closure left runtime stacks unbalanced. ` +
@@ -174,7 +135,7 @@ export function memoBlockUnbalancedState(id: string): string {
 	);
 }
 
-/** React hooks inside memoBlock would be skipped on cache hits. */
+/** React hooks inside `memoBlock` would be skipped on cache hits. */
 export function reactContextInsideMemoBlock(): string {
 	return (
 		`${PREFIX} useReactContext() cannot be called inside memoBlock(). ` +

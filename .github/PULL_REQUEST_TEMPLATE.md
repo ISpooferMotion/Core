@@ -1,16 +1,26 @@
-## Description
-<!-- Please include a summary of the changes and the related issue. -->
+## What changed
 
-## Type of change
+<!-- Explain the change and why it is needed. Link the related issue when there is one. -->
 
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+## How it was tested
+
+<!-- Include the commands you ran and any manual checks that matter. -->
+
+## Change type
+
+* [ ] Bug fix
+* [ ] New feature
+* [ ] Documentation
+* [ ] Internal cleanup
+* [ ] Breaking change
 
 ## Checklist
 
-- [ ] My code follows the style guidelines of this project
-- [ ] I have performed a self-review of my own code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have run `bun run lint`, `bun run typecheck`, and `bun run test`
-- [ ] My changes generate no new warnings
+* [ ] I kept the change focused
+* [ ] I reviewed my own diff
+* [ ] I added or updated tests when behavior changed
+* [ ] I ran `bun run lint`
+* [ ] I ran `bun run typecheck`
+* [ ] I ran `bun run test`
+* [ ] I ran `bun run build` when generated output changed
+* [ ] I documented any public API change

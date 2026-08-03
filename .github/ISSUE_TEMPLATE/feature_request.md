@@ -1,13 +1,31 @@
 ---
 name: Feature Request
-about: Suggest an idea for this project
+about: Suggest an improvement for the project
 title: "[FEATURE] "
 labels: enhancement
-assignees: ''
+assignees: ""
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is.
+## Problem
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+Explain the problem you are trying to solve. Include a real example when possible.
+
+## Suggested change
+
+Describe what you think the package should do.
+
+## Example API
+
+Show what the feature could look like in user code.
+
+```ts
+// Add a small example here.
+```
+
+## Alternatives
+
+Mention any workaround or different approach you already tried.
+
+## Extra context
+
+Add anything else that would help explain the request.

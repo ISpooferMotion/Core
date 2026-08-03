@@ -1,17 +1,17 @@
 /**
- * Configuration options for @ispoofermotion/core
+ * Runtime configuration for @ispoofermotion/core.
  *
  * @since 3.2.0
  */
 export interface IsmConfig {
 	/**
-	 * Base z-index applied to non-default layers (modals, tooltips, etc.).
+	 * Base z index used by named layers such as modals and tooltips.
 	 * Defaults to {@link DEFAULT_LAYER_Z_INDEX}.
 	 */
 	layerZIndex?: number;
 
 	/**
-	 * Automatically mount the dockable DevTools UI over your app.
+	 * Mount the built in DevTools widget with the app.
 	 * Defaults to {@link DEFAULT_SHOW_DEV_TOOLS}.
 	 */
 	showDevTools?: boolean;
@@ -19,8 +19,7 @@ export interface IsmConfig {
 
 /**
  * Default value for {@link IsmConfig.layerZIndex}.
- * Single source of truth  consumed by both `createApp` (runtime fallback)
- * and the `ism-core init` CLI scaffold, so the two never drift apart.
+ * The runtime and CLI scaffold both use this constant.
  *
  * @since 3.3.0
  */
@@ -64,14 +63,11 @@ export function resolveConfig(config: IsmConfig = {}): ResolvedIsmConfig {
 }
 
 /**
- * Type helper for defining a configuration.
+ * Validate a configuration object and return it unchanged.
  *
- * Performs light runtime validation so invalid values fail at the call site
- * rather than reaching rendering code.
- *
- * @param config The configuration object.
- * @returns The configuration object, unchanged.
- * @throws {Error} If `layerZIndex` is not finite or `showDevTools` is not boolean.
+ * @param config Configuration to validate.
+ * @returns The same configuration object.
+ * @throws {Error} When a value has the wrong type or is not finite.
  *
  * @since 3.2.0
  */

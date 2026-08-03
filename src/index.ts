@@ -1,47 +1,55 @@
 /**
- * @ispoofermotion/core  IMUI runtime for Tauri + React
+ * Immediate mode UI runtime for React.
  *
  * @packageDocumentation
+ *
+ * `createApp` runs a draw function and turns widget calls into a React tree.
+ * `defineWidget` creates typed widgets with stable state and IDs.
  *
  * ## Quick start
  *
  * ```ts
- * import { createApp, defineWidget, end, markDirty } from "@ispoofermotion/core";
+ * import {
+ *   createApp,
+ *   defineWidget,
+ *   makeInteractive,
+ *   markDirty,
+ * } from "@ispoofermotion/core";
  * import "@ispoofermotion/core/styles.css";
  *
- * // 1. Define your widgets
- * const Button = defineWidget<{ clicked: boolean }, [label: string], boolean>({
+ * const Button = defineWidget<
+ *   { clicked: boolean },
+ *   [label: string],
+ *   boolean
+ * >({
  *   name: "Button",
  *   defaultState: { clicked: false },
  *   a11y: { role: "button", label: ([label]) => label },
- *   render: ({ id, setState, args, widgetProps }) =>
- *     createElement("button", {
- *       key: id,
- *       ...widgetProps,
- *       ...makeInteractive(() => setState({ clicked: true })),
- *     }, args[0]),
+ *   render: ({ id, args, setState, widgetProps }) =>
+ *     createElement(
+ *       "button",
+ *       {
+ *         key: id,
+ *         ...widgetProps,
+ *         ...makeInteractive(() => setState({ clicked: true })),
+ *       },
+ *       args[0],
+ *     ),
  *   getReturnValue: (state) => state.clicked,
  *   consumeState: (state) => ({ ...state, clicked: false }),
  * });
  *
- * // 2. Write your draw function
  * let count = 0;
- * const App = createApp(() => {
- *   if (Button("Increment")) { count++; markDirty(); }
- * });
  *
- * // 3. Mount
- * createRoot(document.getElementById("root")!).render(createElement(App));
+ * const App = createApp(() => {
+ *   if (Button("Increment")) {
+ *     count += 1;
+ *     markDirty();
+ *   }
+ * });
  * ```
  *
- * ## Stability guarantee
- *
- * See `STABILITY.md` in the repository root. The public API listed below
- * is stable from v3.2.0 onwards. New behavior is always additive  new
- * optional parameters or new functions. Existing signatures are preserved
- * in patch releases; carefully scoped type corrections may occur in minor
- * releases when runtime behavior is unchanged.
- * (Versions prior to 3.2.0 predate this guarantee; see the changelog.)
+ * Public API stability is documented in `STABILITY.md`.
  *
  * @since 1.0.0
  */
@@ -77,15 +85,12 @@ import {
 import type { FrameEntry } from "./types";
 
 /**
- * Push an ID segment onto the stack.
+ * Add a stable segment to widget IDs created after this call.
  *
- * All widgets called while this segment is active will include it as a
- * prefix in their composite IDs, creating a stable unique identity even
- * when the same widget type appears multiple times.
+ * Pair every call with {@link popId}. This is useful in loops where multiple
+ * widgets have the same type and visible label.
  *
- * **Always pair with a matching `popId()` call.**
- *
- * @param id - A stable string identifier
+ * @param id Stable value for this part of the tree.
  *
  * @since 1.0.0
  */
@@ -100,7 +105,7 @@ export function pushId(id: string): void {
 }
 
 /**
- * Pop the most recent ID segment from the stack.
+ * Remove the latest ID segment added by {@link pushId}.
  *
  * @since 1.0.0
  */
@@ -115,7 +120,7 @@ export function popId(): void {
 }
 
 /**
- * Push an environment context value.
+ * Add a value to the draw context stack for `key`.
  *
  * @since 2.0.0
  */
@@ -130,7 +135,7 @@ export function pushContext<T>(key: string, value: T): void {
 }
 
 /**
- * Pop the most recent environment context value.
+ * Remove the latest draw context value for `key`.
  *
  * @since 2.0.0
  */
@@ -145,7 +150,7 @@ export function popContext(key: string): void {
 }
 
 /**
- * Get the current environment context value for a key.
+ * Read the latest draw context value for `key`.
  *
  * @since 2.0.0
  */
@@ -160,7 +165,7 @@ export function getContext<T>(key: string): T | undefined {
 }
 
 /**
- * Push a layer onto the layer stack.
+ * Send following widgets to a named render layer.
  *
  * @since 2.0.0
  */
@@ -175,7 +180,7 @@ export function pushLayer(layerName: string): void {
 }
 
 /**
- * Pop the most recent layer from the stack.
+ * Return to the previous render layer.
  *
  * @since 2.0.0
  */
@@ -204,7 +209,14 @@ function shallowEqual(a: readonly unknown[], b: readonly unknown[]): boolean {
 }
 
 /**
- * Memoize a subtree of widgets.
+ * Reuse a widget subtree while its dependency values stay equal.
+ *
+ * The closure runs again when a dependency changes or the cached IDs can no
+ * longer be inserted safely. React hooks must not be called inside it.
+ *
+ * @param id Stable name for this memo block.
+ * @param deps Values checked with shallow equality.
+ * @param drawClosure Function that records the subtree.
  *
  * @since 2.0.0
  */
@@ -245,7 +257,9 @@ export function memoBlock(
 }
 
 /**
- * Request focus for a specific widget ID.
+ * Set the focused widget ID.
+ *
+ * Pass `null` to clear focus.
  *
  * @since 2.0.0
  */
@@ -270,7 +284,7 @@ export function setFocus(id: string | null): void {
 }
 
 /**
- * Check whether a specific widget ID currently has focus.
+ * Check whether a widget ID is currently focused.
  *
  * @since 2.0.0
  */
@@ -297,7 +311,7 @@ export function isFocused(id: string): boolean {
 }
 
 /**
- * Get the currently focused widget ID.
+ * Return the focused widget ID for the active runtime.
  *
  * @since 3.3.0
  */
@@ -307,7 +321,7 @@ export function getFocusedId(): string | null {
 }
 
 /**
- * Close the innermost open scoped widget.
+ * Close the most recently opened scoped widget.
  *
  * @since 1.0.0
  */
@@ -322,7 +336,10 @@ export function end(): void {
 }
 
 /**
- * Signal that external state changed and a new frame is needed.
+ * Ask every mounted runtime to draw another frame.
+ *
+ * Use this after external state changes outside a widget `setState` call.
+ * Multiple calls in the same task are batched by each runtime.
  *
  * @since 1.0.0
  */

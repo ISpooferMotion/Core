@@ -127,7 +127,7 @@ class FramePool {
 	}
 }
 
-/** The immediate-mode runtime engine for one createApp root. */
+/** Runtime state for one component returned by `createApp`. */
 export class Runtime {
 	private readonly storage: StorageAdapter | null;
 	private stateStore = new Map<string, unknown>();
@@ -453,7 +453,7 @@ export class Runtime {
 		return { cacheKey, idSegment: `${encoded}${suffix}` };
 	}
 
-	/** @deprecated Use buildMemoIdentity. */
+	/** @deprecated Use `buildMemoIdentity`. */
 	buildMemoKey(id: string): string {
 		return this.buildMemoIdentity(id).cacheKey;
 	}

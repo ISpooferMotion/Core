@@ -1,195 +1,177 @@
 import type { AriaRole, ReactNode } from "react";
 
 /**
- * Interface for injecting external persistent storage into the engine.
+ * Synchronous storage used for persistent widget state.
  *
- * Implementations must be synchronous: `getState` reads from storage
- * inline during a widget's first registration in a frame, so an async
- * adapter (e.g. IndexedDB, a network-backed store) is not supported here
- * load such data before mounting and seed it via a synchronous adapter
- * (e.g. an in-memory Map) instead.
+ * State is read while a widget is registered, so async storage cannot be used
+ * directly. Load async data before mounting and expose it through a synchronous
+ * adapter such as an in memory `Map`.
  *
  * @since 2.0.0
  */
 export interface StorageAdapter {
-	/** Return the stored value for `key`, or `undefined`/`null` if absent. */
+	/** Return the value stored for `key`, or a missing value. */
 	get(key: string): unknown;
-	/** Store `value` under `key`, overwriting any existing value. */
+	/** Store `value` under `key`. */
 	set(key: string, value: unknown): void;
-	/** Remove any stored value for `key`. Optional because the runtime never deletes persisted values implicitly. */
+	/** Remove `key` when the adapter supports deletion. */
 	delete?(key: string): void;
 }
 
 /**
- * Stable attributes and class names that the library injects into every widget.
- * Widget authors spread this onto their root DOM element to opt in to the
- * styling hook and DevTools identity.
+ * Common DOM props created for every widget instance.
+ *
+ * Spread this object onto the widget root to get stable data attributes,
+ * standard class names, and configured accessibility props.
  *
  * @example
  * ```ts
  * render: ({ id, widgetProps }) =>
- *   createElement("button", { key: id, ...widgetProps }, "Click me"),
+ *   createElement("button", { key: id, ...widgetProps }, "Click me")
  * ```
  */
 export interface WidgetProps {
-	/** The widget type name, e.g. `"Button"`. Used for CSS targeting. */
+	/** Widget type name used by DevTools and CSS selectors. */
 	"data-ism-widget": string;
-	/** The stable composite ID of this instance. */
+	/** Stable composite ID for this widget instance. */
 	"data-ism-id": string;
 	/**
-	 * Two CSS classes: `ism-widget` (all widgets) and
-	 * `ism-{lowercasename}` (type-specific). Override styles by targeting
-	 * these in your CSS without touching library code.
+	 * Includes `ism-widget` and a class based on the lowercase widget name.
 	 */
 	className: string;
-	/** ARIA role, if set via WidgetConfig.a11y.role */
+	/** ARIA role from {@link WidgetConfig.a11y}. */
 	role?: AriaRole;
-	/** ARIA label, if set via WidgetConfig.a11y.label */
+	/** ARIA label from {@link WidgetConfig.a11y}. */
 	"aria-label"?: string;
-	/** ARIA description, if set via WidgetConfig.a11y.description */
+	/** ID of the hidden description element created by the runtime. */
 	"aria-describedby"?: string;
 }
 
-/**
- * Accessibility configuration for a widget type.
- * These values are automatically injected into {@link WidgetProps},
- * so widget authors never need to compute them manually.
- */
+/** Accessibility settings shared by every instance of a widget type. */
 export interface WidgetA11y<A extends unknown[] = unknown[]> {
-	/**
-	 * ARIA role for this widget type (e.g. `"button"`, `"slider"`, `"checkbox"`).
-	 * Applied to every instance.
-	 */
+	/** ARIA role applied to the widget root. */
 	role?: AriaRole;
 	/**
-	 * ARIA label generator. Can be a static string or a function that receives
-	 * the widget's arguments and returns a label string.
+	 * Static label or a function that builds a label from widget arguments.
 	 *
 	 * @example
 	 * ```ts
-	 * // Static
 	 * label: "Close dialog"
 	 *
-	 * // Dynamic from args
-	 * label: ([labelArg]) => String(labelArg)
+	 * label: ([label]) => String(label)
 	 * ```
 	 */
 	label?: string | ((args: A) => string);
-	/**
-	 * Human-readable description of what this widget does.
-	 * Used as `aria-describedby` text.
-	 */
+	/** Text placed in a hidden element and linked with `aria-describedby`. */
 	description?: string;
 }
 
 /**
- * Internal render props passed at the type-erasure boundary.
- * Used by FrameEntry.renderFn, which bridges to the typed WidgetRenderProps
- * via closures created in defineWidget.
+ * Internal props passed through the type erased render boundary.
+ *
+ * @internal
  */
 export interface FrameRenderProps {
-	/** Stable composite ID for this widget instance */
+	/** Stable widget instance ID. */
 	id: string;
-	/** Current persistent state (type-erased) */
+	/** State snapshot used for this render. */
 	state: unknown;
-	/** Stable identifier for the createApp runtime that owns this widget. */
+	/** ID of the runtime that owns the widget. */
 	runtimeId: string;
-	/** Update this widget's persistent state. Accepts a direct value or updater function. */
+	/** Update widget state with a value or updater function. */
 	setState: (updater: unknown) => void;
-	/** Arguments passed to the widget function by the user */
+	/** Arguments passed to the widget call. */
 	args: unknown[];
-	/** Rendered children for scoped widgets, null otherwise */
+	/** Rendered children for a scoped widget, otherwise `null`. */
 	children: ReactNode | null;
-	/** Pre-computed styling + ARIA attributes. Spread onto root DOM element. */
+	/** Common DOM and accessibility props for the widget root. */
 	widgetProps: WidgetProps;
 }
 
 /**
- * Props received by a widget's render function.
- * Fully typed  widget authors work with these, never with FrameRenderProps.
+ * Typed props passed to a widget render function.
  *
- * @typeParam S - The shape of this widget's persistent state
- * @typeParam A - Tuple type of the arguments the widget function accepts
+ * @typeParam S Widget state.
+ * @typeParam A Widget argument tuple.
  */
 export interface WidgetRenderProps<S, A extends unknown[] = unknown[]> {
-	/** Stable composite ID for this widget instance */
+	/** Stable widget instance ID. */
 	id: string;
-	/** Current persistent state */
+	/** State snapshot used for this render. */
 	state: S;
-	/** Stable identifier for the createApp runtime that owns this widget. */
+	/** ID of the runtime that owns the widget. */
 	runtimeId?: string;
-	/** Update this widget's persistent state. Triggers a re-render. */
+	/** Update widget state and request another frame. */
 	setState: (updater: S | ((prev: S) => S)) => void;
-	/** Arguments passed to the widget function by the user */
+	/** Arguments passed to the widget call. */
 	args: A;
-	/** Rendered children for scoped widgets, null otherwise */
+	/** Rendered children for a scoped widget, otherwise `null`. */
 	children: ReactNode | null;
 	/**
-	 * Pre-computed styling + ARIA attributes. Spread onto your root DOM element
-	 * to participate in the CSS hook system and accessibility tree.
+	 * Common DOM and accessibility props for the widget root.
 	 *
 	 * @example
 	 * ```ts
 	 * render: ({ id, widgetProps }) =>
-	 *   createElement("button", { key: id, ...widgetProps }, "Click"),
+	 *   createElement("button", { key: id, ...widgetProps }, "Click")
 	 * ```
 	 */
 	widgetProps: WidgetProps;
 }
 
 /**
- * Configuration for defining a new widget type via {@link defineWidget}.
+ * Configuration used by {@link defineWidget}.
  *
- * @typeParam S - The shape of this widget's persistent state
- * @typeParam A - Tuple type of the arguments the widget function accepts
- * @typeParam R - The return type of the widget function
+ * @typeParam S Widget state.
+ * @typeParam A Widget argument tuple.
+ * @typeParam R Value returned by the widget call.
  *
  * @since 1.0.0
  */
 export interface WidgetConfig<S, A extends unknown[] = unknown[], R = void> {
 	/**
-	 * Unique name for this widget type (e.g., `"Button"`, `"Slider"`).
+	 * Unique widget type name.
 	 *
-	 * Must be non-empty and must not contain `/`, `#`, or whitespace
-	 * these are reserved characters in the ID composition system.
+	 * It cannot be empty or contain `/`, `#`, or whitespace because those
+	 * characters are used when widget IDs are built.
 	 */
 	name: string;
 
-	/** Initial state for new instances of this widget */
+	/** Initial state copied for each new widget instance. */
 	defaultState: S;
 
-	/** If true, the widget state is persisted across sessions via the StorageAdapter */
+	/** Save this widget state through the app storage adapter. */
 	persistent?: boolean;
 
-	/** If true, this widget opens a scope that must be closed with {@link end} */
+	/** Open a child scope that must later be closed with {@link end}. */
 	scoped?: boolean;
 
 	/**
-	 * Extract the label string from the widget's arguments for ID generation.
-	 * If omitted, defaults to using the first argument if it's a string.
-	 * Return `undefined` for widgets without labels (e.g., Separator).
+	 * Return the label used to build the widget ID.
+	 *
+	 * By default, the first argument is used when it is a string. Return
+	 * `undefined` for widgets that do not have a label.
 	 */
 	getLabel?: (...args: A) => string | undefined;
 
 	/**
-	 * Render this widget to a React element.
-	 * Called by the React bridge during React's render phase. Keep it pure and avoid side effects.
+	 * Render the widget as React output.
 	 *
-	 * Access `props.widgetProps` and spread it onto your root element
-	 * to participate in the CSS hook and accessibility systems.
+	 * This runs during React rendering, so keep it pure. Spread `widgetProps`
+	 * onto the root element to include the standard selectors and ARIA props.
 	 */
 	render: (props: WidgetRenderProps<S, A>) => ReactNode;
 
 	/**
-	 * Compute the value returned to the user when they call this widget function.
-	 * Called during the draw pass. Must be side-effect free.
+	 * Return the value produced when this widget is called during a draw pass.
+	 * Keep this function free of side effects.
 	 */
 	getReturnValue: (state: S, ...args: A) => R;
 
 	/**
-	 * Reset transient state immediately after {@link getReturnValue} during the draw pass.
-	 * Use this to clear one-shot event flags (e.g., `clicked` on a Button) so
-	 * development-only React StrictMode render retries cannot process them twice.
+	 * Clear temporary state after `getReturnValue` reads it.
+	 *
+	 * This is useful for one shot values such as button clicks.
 	 *
 	 * @example
 	 * ```ts
@@ -198,47 +180,36 @@ export interface WidgetConfig<S, A extends unknown[] = unknown[], R = void> {
 	 */
 	consumeState?: (state: S) => S;
 
-	/**
-	 * Accessibility configuration. Values are automatically injected into
-	 * `widgetProps` so widget authors don't need to compute them manually.
-	 */
+	/** Accessibility settings copied into `widgetProps`. */
 	a11y?: WidgetA11y<A>;
 }
 
 /**
- * Internal frame entry produced during the draw pass.
- * Pure data describing what to render, with closures for the React bridge.
- * No direct DOM references.
+ * Internal widget record created during a draw pass.
  *
  * @internal
  */
 export interface FrameEntry {
-	/** Stable composite ID */
+	/** Stable widget instance ID. */
 	id: string;
-	/** Widget type name (matches WidgetConfig.name) */
+	/** Widget type name from {@link WidgetConfig.name}. */
 	widgetName: string;
-	/** Arguments passed by the user */
+	/** Arguments passed to the widget call. */
 	args: unknown[];
-	/** Whether this widget opens a scope */
+	/** Whether this entry owns a child scope. */
 	scoped: boolean;
-	/** Child entries (populated between scope open and end()) */
+	/** Entries recorded inside this widget scope. */
 	children: FrameEntry[];
-	/** Default state for initializing new instances */
+	/** Default state used when the instance is first seen. */
 	defaultState: unknown;
-	/** State snapshot observed during the draw pass and used for this render. */
+	/** State snapshot used by the current React render. */
 	renderState: unknown;
-	/** Whether the state is persisted across sessions */
+	/** Whether this state is saved through the storage adapter. */
 	persistent: boolean;
-	/**
-	 * Pre-computed widgetProps for this entry.
-	 * Computed once per frame in defineWidget and cached here.
-	 */
+	/** DOM and accessibility props computed during the draw pass. */
 	widgetProps: WidgetProps;
-	/**
-	 * Render closure created by defineWidget.
-	 * Bridges from type-erased FrameRenderProps to the typed widget render function.
-	 */
+	/** Type erased render function created by {@link defineWidget}. */
 	renderFn: (props: FrameRenderProps) => ReactNode;
-	/** Optional accessible description rendered by the React bridge. */
+	/** Optional description rendered in a hidden element. */
 	a11yDescription?: string;
 }

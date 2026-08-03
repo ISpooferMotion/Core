@@ -20,7 +20,7 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-// --- Helpers: run a simulated draw pass ---
+// Draw pass helper
 
 function drawPass(fn: () => void) {
 	runtime.beginFrame();
@@ -29,10 +29,10 @@ function drawPass(fn: () => void) {
 }
 
 function registerApp() {
-	runtime.registerApp(() => {}); // no-op trigger for tests
+	runtime.registerApp(() => {}); // The tests only need a mounted runtime, not a real render callback.
 }
 
-// --- State persistence ---
+// Persistent state
 
 describe("state persistence", () => {
 	it("initializes state with defaultState on first access", () => {
@@ -69,15 +69,15 @@ describe("state persistence", () => {
 	});
 });
 
-// --- ID collision detection ---
+// ID collisions
 
 describe("ID collision", () => {
 	it("returns the same ID for the same label in a frame", () => {
 		registerApp();
 		drawPass(() => {
 			const id1 = runtime.buildId("Button", "Submit");
-			// Normally only one widget would call buildId per label per frame;
-			// simulate a collision (two widgets with the same label)
+			// Calling buildId twice with the same label simulates two matching widgets.
+			// The second call should receive a collision suffix.
 			const id2 = runtime.buildId("Button", "Submit");
 			expect(id1).not.toBe(id2);
 			expect(id2).toContain("__2");
@@ -158,17 +158,17 @@ describe("ID collision", () => {
 	});
 });
 
-// --- State GC (orphan cleanup) ---
+// State cleanup
 
 describe("state GC", () => {
 	it("removes state for widgets that disappear after a frame", () => {
 		registerApp();
 		const id = "Button/Orphan";
 
-		// Frame 1: widget exists, gets state
+		// Frame 1 creates the widget state.
 		drawPass(() => {
 			runtime.buildId("Button", "Orphan");
-			// Simulate registering a widget so it appears in the frame
+			// Register an entry so the ID is considered active.
 			runtime.getCurrentParentChildren().push({
 				id,
 				widgetName: "Button",
@@ -192,26 +192,26 @@ describe("state GC", () => {
 			clicked: false,
 		});
 
-		// Frame 2: widget is absent
+		// Frame 2 leaves the widget out.
 		drawPass(() => {
-			// don't register the widget
+			// No widget is registered in this frame.
 		});
 
-		// Fast forward time to trigger GC
+		// Move past the cleanup timeout.
 		vi.advanceTimersByTime(1500);
 
-		// End frame again to process GC on next frame
+		// Finish another frame so expired state is removed.
 		drawPass(() => {});
 
-		// The state map should NOT have the orphaned key.
-		// We verify by checking that the widget's state was cleared:
-		// After GC, getState would re-initialize to defaultState
-		// (meaning it was deleted). Since getState always returns something,
-		// we check it matches the default (indicating it was pruned and re-created).
-		// Actually the easiest way: set a non-default value, then check it's gone.
-		registerApp(); // reset to get fresh state
+		// A new read should return the default instead of the old value.
+		// The old state should no longer be reachable.
+		// getState always returns a value, so behavior is checked indirectly.
+		// A recreated widget starts from its default state.
+		// This proves the previous entry was removed.
+		// Set a nondefault value before the cleanup check.
+		registerApp(); // Mount again before checking the new state.
 		const fresh = runtime.getState(id, { clicked: true });
-		// If GC worked, state was deleted, so this returns the defaultState { clicked: true }
+		// The old value is gone if cleanup worked.
 		expect(fresh).toEqual({ clicked: true });
 	});
 
@@ -241,22 +241,22 @@ describe("state GC", () => {
 					runtime.getState(id, {});
 				}
 			});
-			// Empty frame: all widgets disappear, GC fires
+			// An empty frame lets every previous widget expire.
 			vi.advanceTimersByTime(1500);
 			drawPass(() => {});
 		}
 
-		// After 1000 cycles, the state store should be empty
-		// (all widgets were GC'd in the final empty frame)
-		// We can verify by checking no old IDs still return non-default state
-		// The store is internal but we test via behavior:
+		// The repeated cycle should not leave old state behind.
+		// The final empty frame removes the last active widget.
+		// Check cleanup through public behavior because the store is private.
+		// A missing old value should fall back to the provided default.
 		const testId = "Button/cycle-999-item-5";
 		const val = runtime.getState(testId, { sentinel: "fresh" });
 		expect(val).toEqual({ sentinel: "fresh" });
 	});
 });
 
-// --- Scope management ---
+// Scopes
 
 describe("scope management", () => {
 	it("pushScope / popScope correctly nest widget children", () => {
@@ -311,7 +311,7 @@ describe("scope management", () => {
 	});
 });
 
-// --- markDirty batching ---
+// markDirty batching
 
 describe("markDirty batching", () => {
 	it("multiple markDirty calls in the same microtask fire only once", async () => {
@@ -324,8 +324,8 @@ describe("markDirty batching", () => {
 		runtime.markDirty();
 		runtime.markDirty();
 
-		// All three calls should be batched into one trigger
-		await Promise.resolve(); // flush microtask queue
+		// Repeated calls in one task should schedule one render.
+		await Promise.resolve(); // Let the queued microtask run.
 		expect(renderCount).toBe(1);
 	});
 
@@ -347,7 +347,7 @@ describe("markDirty batching", () => {
 	});
 });
 
-// --- Inspection revisions and frame-pool retention ---
+// Inspection revisions and frame pool reuse
 
 describe("runtime diagnostics", () => {
 	function addFrameEntry(label: string): string {
@@ -412,7 +412,7 @@ describe("runtime diagnostics", () => {
 	});
 });
 
-// --- Cross-runtime id ownership ---
+// Runtime ownership
 
 describe("getRuntimeForId", () => {
 	it("resolves to the runtime that built the id", () => {
@@ -454,7 +454,7 @@ describe("getRuntimeForId", () => {
 		idB = other.buildId("Button", "cancel");
 		other.endFrame();
 
-		// Distinct ids from distinct runtimes each resolve to their own owner.
+		// Different IDs should resolve to their own runtime.
 		expect(getRuntimeForId(idA)).toBe(runtime);
 		expect(getRuntimeForId(idB)).toBe(other);
 
@@ -473,7 +473,7 @@ describe("getRuntimeForId", () => {
 			idA = runtime.buildId("Button", "save");
 		});
 
-		// Same widget name + label + no pushId scoping -> same composite id.
+		// Matching widget names and labels can produce the same ID in separate roots.
 		other.beginFrame();
 		const idB = other.buildId("Button", "save");
 		other.endFrame();

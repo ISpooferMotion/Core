@@ -35,8 +35,8 @@ describe("ISMCoreErrorBoundary", () => {
 	});
 
 	it("catches a thrown error and renders the fallback instead of crashing", () => {
-		// React logs its own uncaught-error noise for error boundaries; keep the
-		// test output clean without hiding a real assertion failure.
+		// React logs caught boundary errors to the console.
+		// Silence that expected noise so assertion failures stay visible.
 		const consoleError = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => {});
@@ -102,11 +102,11 @@ describe("ISMCoreErrorBoundary", () => {
 		});
 		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
 
-		// Fix the underlying condition and let the parent re-render with fresh
-		// children *before* clicking retry  retry only clears the boundary's
-		// caught-error state, it doesn't refresh props.children by itself. If we
-		// clicked retry first, it would re-render against the still-stale
-		// (throwing) children and immediately re-catch.
+		// Update the parent first so the boundary receives safe children.
+		// Retry only clears the boundary state.
+		// It does not replace props.children on its own.
+		// Retrying with the old throwing child would immediately fail again.
+		// The second retry should render the fixed child.
 		shouldThrow = false;
 		act(() => {
 			root.render(createElement(Wrapper));

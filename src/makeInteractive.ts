@@ -2,34 +2,29 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { getActiveRuntimeOrNull, getRuntimeForId } from "./runtime";
 
 /**
- * `makeInteractive`  accessibility helper for widget authors.
+ * Build common keyboard and focus props for a custom interactive element.
  *
- * Returns props that make any DOM element fully keyboard-accessible:
- * - `tabIndex` for focus reachability
- * - `onKeyDown` handler that fires `onClick` on Enter and Space
- * - `role` if provided
+ * The returned object adds a tab index, handles Enter and Space, and can add
+ * ARIA state. Spread it onto the same element as `widgetProps`.
  *
- * Spread these onto the same element as `widgetProps` to get keyboard
- * accessibility without implementing it per-widget.
- *
- * @param onClick - The action to perform when the user activates the element
- * @param options - Optional overrides
- * @returns Props to spread onto the root DOM element
+ * @param onClick Action to run when the element is activated.
+ * @param options Optional keyboard, focus, and ARIA settings.
+ * @returns Props for the interactive DOM element.
  *
  * @since 1.0.0
  *
  * @example
  * ```ts
- * import { makeInteractive } from "@ispoofermotion/core";
- *
- * render: ({ id, state, setState, widgetProps }) => {
- *   const interactive = makeInteractive(() => setState({ clicked: true }));
- *   return createElement("div", {
- *     key: id,
- *     ...widgetProps,
- *     ...interactive,
- *   }, "Click me");
- * }
+ * render: ({ id, setState, widgetProps }) =>
+ *   createElement(
+ *     "div",
+ *     {
+ *       key: id,
+ *       ...widgetProps,
+ *       ...makeInteractive(() => setState({ clicked: true })),
+ *     },
+ *     "Click me",
+ *   )
  * ```
  */
 
@@ -37,25 +32,21 @@ export function makeInteractive(
 	onClick: () => void,
 	options: {
 		/**
-		 * Override the default tabIndex (0 = in natural tab order).
-		 * Pass -1 to remove from tab order (e.g., a disabled element).
+		 * Tab index applied to the element. The default is `0`.
+		 * Use `-1` when the element should only receive programmatic focus.
 		 */
 		tabIndex?: number;
-		/**
-		 * Keys that trigger onClick in addition to Enter and Space.
-		 * Values are KeyboardEvent.key strings.
-		 *
-		 */
+		/** Extra `KeyboardEvent.key` values that should trigger activation. */
 		extraKeys?: string[];
-		/** Whether the element is disabled. Disabled elements are not interactive. */
+		/** Disable click and keyboard activation. */
 		disabled?: boolean;
-		/** The widget ID to track for focus management */
+		/** Widget ID used by the runtime focus helpers. */
 		id?: string;
-		/** ARIA role to apply (e.g. "button", "tab"). Not set if omitted. */
+		/** Optional ARIA role for the element. */
 		role?: string;
-		/** For role="tab"/role="option"-style widgets: sets aria-selected. Not set if omitted. */
+		/** Optional `aria-selected` state. */
 		selected?: boolean;
-		/** For toggle-button-style widgets: sets aria-pressed. Not set if omitted. */
+		/** Optional `aria-pressed` state. */
 		pressed?: boolean;
 	} = {},
 ): {
@@ -87,9 +78,9 @@ export function makeInteractive(
 		}
 	};
 
-	// Widget render functions execute with their owning runtime active, so
-	// capture that exact instance when possible. This keeps focus routing
-	// correct even when two createApp roots produce the same composite ID.
+	// Prefer the runtime that is active while the widget renders.
+	// This keeps focus routing correct when separate app roots share an ID.
+	// Fall back to finding the runtime by widget ID.
 	const activeRuntime = id ? getActiveRuntimeOrNull() : null;
 	const owningRuntime = id
 		? activeRuntime?.ownsId(id)
@@ -110,8 +101,8 @@ export function makeInteractive(
 				}
 			: undefined;
 
-	// Use conditional spreading so optional properties are absent (not undefined)
-	// when they have no value. This satisfies exactOptionalPropertyTypes.
+	// Leave optional props out completely when they do not have a value.
+	// This also keeps exactOptionalPropertyTypes happy.
 	return {
 		tabIndex: disabled ? -1 : tabIndex,
 		onKeyDown: handleKeyDown,

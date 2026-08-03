@@ -1,73 +1,225 @@
-<div align="center">
-  <img src="./assets/logo.svg" alt="ISMCore Logo" width="128" />
-</div>
+# @ispoofermotion/core
 
-<h1 align="center">@ispoofermotion/core</h1>
+`@ispoofermotion/core` is an immediate mode UI runtime built on React. You describe the current frame by calling widgets inside a draw function, and the runtime handles widget identity, state, rendering, and updates.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-3.3.1-blue.svg?style=for-the-badge" alt="Version" />
-  <img src="https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/React-19.0.0-61DAFB.svg?style=for-the-badge&logo=react" alt="React 19" />
-</p>
+It works with React 18 and React 19. It was built with Tauri apps in mind, but it does not depend on Tauri and does not set up IPC for you.
 
-<p align="center">
-  The core declarative rendering engine and widget system for your UI.
-</p>
-
-## Overview
-
-`@ispoofermotion/core` provides a highly optimized, React-based immediate-mode runtime for building UI on top of React 18+ (CI exercises both React 18 and React 19). It abstracts away manual React state wiring by offering a specialized `defineWidget` API for pooled, allocation-light widget state and re-renders, well suited to UIs that update frequently (e.g. driven by Tauri IPC events).
-
-### Installation
+## Install
 
 ```bash
-bun add @ispoofermotion/core
+bun add @ispoofermotion/core react react-dom
 ```
 
-## Architecture
+Import the base styles once near your app entry point.
 
-* **Widget System (`defineWidget`)**: A declarative factory for defining UI components with isolated state boundaries, built-in accessibility scaffolding, and predictable re-render cycles.
-* **Runtime Orchestration (`createApp`)**: Returns a plain React component that wraps your draw function in an internal error boundary and schedules re-renders for you. You mount it yourself with `createRoot` exactly as you would any other component -- `createApp` does not perform concurrent-mode initialization or IPC injection on your behalf. If you're using Tauri, wire up `listen(...)` + `markDirty()` yourself.
-* **Style Engine**: Bundles the baseline `styles.css` containing global aesthetic resets and tactile layout primitives.
+```ts
+import "@ispoofermotion/core/styles.css";
+```
 
-## Usage
-
-### Defining a Widget
+## Basic example
 
 ```tsx
-import { defineWidget } from "@ispoofermotion/core";
+import {
+  createApp,
+  defineWidget,
+  makeInteractive,
+  markDirty,
+} from "@ispoofermotion/core";
 import { createElement } from "react";
+import { createRoot } from "react-dom/client";
 
-export const ProfileCard = defineWidget<{ clicked: boolean }, [name: string], boolean>({
-  name: "ProfileCard",
+const Button = defineWidget<
+  { clicked: boolean },
+  [label: string],
+  boolean
+>({
+  name: "Button",
   defaultState: { clicked: false },
-  a11y: { role: "button", label: ([name]) => `View profile for ${name}` },
-  render: ({ id, state, setState, args, widgetProps }) =>
+  a11y: {
+    role: "button",
+    label: ([label]) => label,
+  },
+  render: ({ id, args, setState, widgetProps }) =>
     createElement(
-      "div",
-      { key: id, ...widgetProps, onClick: () => setState({ clicked: true }) },
-      `Hello ${args[0]}`,
+      "button",
+      {
+        key: id,
+        ...widgetProps,
+        ...makeInteractive(() => setState({ clicked: true })),
+      },
+      args[0],
     ),
   getReturnValue: (state) => state.clicked,
   consumeState: (state) => ({ ...state, clicked: false }),
 });
+
+let count = 0;
+
+const App = createApp(() => {
+  if (Button(`Count: ${count}`)) {
+    count += 1;
+    markDirty();
+  }
+});
+
+const root = document.getElementById("root");
+
+if (!root) {
+  throw new Error("Missing #root element");
+}
+
+createRoot(root).render(createElement(App));
 ```
 
-`consumeState` runs immediately after `getReturnValue` during the draw pass. It is intended for one-shot values such as clicks, so the same event is not processed twice when React StrictMode repeats a development render.
+`consumeState` runs after `getReturnValue` during the draw pass. It is useful for values such as clicks that should only be handled once.
 
-When using React context, call `useReactContext()` before entering a `memoBlock()` and include the context value in the memo dependencies. Hooks inside a memoized closure are rejected because cache hits skip that closure and would change hook order.
+## How it works
 
-### Development Scripts
+`createApp` creates a React component and a separate runtime for that app root. Every render starts a frame, runs your draw function, builds a frame tree, and turns that tree into React elements.
 
-| Command               | Description                                      |
-| --------------------- | ------------------------------------------------ |
-| `bun run build`       | Bundles the library using `tsup`.                |
-| `bun run dev`         | Watches source files and rebuilds on change.     |
-| `bun run test`        | Runs the test suite via Vitest.                  |
-| `bun run lint`        | Runs the Biome linter across `src/`.             |
-| `bun run typecheck`   | Validates TypeScript types.                      |
-| `bun run verify:lock` | Confirms `package.json` and `bun.lock` agree.    |
+`defineWidget` creates a callable widget function. Each widget gets a stable ID, its own state, typed arguments, optional accessibility props, and a render function.
+
+Widget render functions run during React rendering. Keep them pure. The draw function should also stay predictable and should call widgets in a stable order.
+
+## Widget identity
+
+The runtime builds widget IDs from the widget name, label, scope, and current ID stack. Use `pushId` and `popId` when repeated widgets would otherwise produce the same ID.
+
+```ts
+for (const user of users) {
+  pushId(user.id);
+  UserRow(user.name);
+  popId();
+}
+```
+
+A scoped widget opens a child area in the frame tree. Close it with `end`.
+
+```ts
+Panel("Settings");
+Text("Account");
+end();
+```
+
+## External state
+
+Call `markDirty()` after changing state that lives outside the widget runtime.
+
+```ts
+let connected = false;
+
+const stop = listen("connection_changed", (event) => {
+  connected = event.payload;
+  markDirty();
+});
+```
+
+The package does not register Tauri listeners or manage external state automatically.
+
+## Persistent widget state
+
+Pass a synchronous storage adapter to `createApp`, then set `persistent: true` on widgets that should use it.
+
+```ts
+const memory = new Map<string, unknown>();
+
+const App = createApp(draw, {
+  storage: {
+    get: (key) => memory.get(key),
+    set: (key, value) => memory.set(key, value),
+    delete: (key) => memory.delete(key),
+  },
+});
+```
+
+Storage reads happen while a widget is registered, so async adapters are not supported. Load async data before mounting and expose it through a synchronous adapter.
+
+## Context, layers, and memo blocks
+
+`pushContext`, `getContext`, and `popContext` pass values through the draw tree without adding them to every widget argument.
+
+`pushLayer` and `popLayer` place widgets in named render layers. Nondefault layers use the configured `layerZIndex`.
+
+`memoBlock` reuses a widget subtree while its dependency values stay equal.
+
+```ts
+memoBlock("user-list", [users], () => {
+  for (const user of users) {
+    pushId(user.id);
+    UserRow(user.name);
+    popId();
+  }
+});
+```
+
+Do not call `useReactContext` inside a `memoBlock`. A cache hit skips the closure, which would change React hook order.
+
+## Configuration
+
+```ts
+const App = createApp(draw, {
+  layerZIndex: 200,
+  showDevTools: true,
+  storage,
+});
+```
+
+`layerZIndex` defaults to `100`.
+
+`showDevTools` defaults to `false`.
+
+`defineConfig` validates these values and returns the same object.
+
+```ts
+import { defineConfig } from "@ispoofermotion/core";
+
+export default defineConfig({
+  layerZIndex: 200,
+  showDevTools: false,
+});
+```
+
+## Config scaffold
+
+The package includes a small CLI that creates `ism.config.json` with schema support.
+
+```bash
+bunx ism-core init
+```
+
+Use `--force` to replace an existing file. The runtime does not load this JSON automatically. Import it through your bundler and pass its values to `createApp`.
+
+## Development
+
+Install dependencies.
+
+```bash
+bun install
+```
+
+Run the main checks.
+
+```bash
+bun run typecheck
+bun run lint
+bun run test
+bun run build
+```
+
+Other useful commands:
+
+`bun run dev` watches the source and rebuilds it.
+
+`bun run test:coverage` runs tests with coverage.
+
+`bun run docs` rebuilds the TypeDoc site.
+
+`bun run verify:lock` checks that `package.json` and `bun.lock` match.
+
+## API stability
+
+The public API stability rules are in [STABILITY.md](./STABILITY.md). Release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## License
 
-MIT © ISpooferMotion. See [LICENSE](./LICENSE).
+This project uses the MIT License. See [LICENSE](./LICENSE).

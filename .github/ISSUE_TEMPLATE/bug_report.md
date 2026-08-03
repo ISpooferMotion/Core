@@ -1,23 +1,41 @@
 ---
 name: Bug Report
-about: Create a report to help us improve the library
+about: Report a problem in the library
 title: "[BUG] "
 labels: bug
-assignees: ''
+assignees: ""
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+## What happened
 
-**To Reproduce**
-Steps to reproduce the behavior:
+Describe the problem and what you were doing when it happened.
 
-1. ...
+## How to reproduce it
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+1. Add the first step.
+2. Add the next step.
+3. Include a small code sample when possible.
 
-**Environment (please complete the following information):**
+## Expected result
 
-- OS: [e.g. Windows]
-- Node/Bun Version [e.g. Bun 1.1]
+Explain what you expected to happen.
+
+## Actual result
+
+Include the error message, stack trace, or wrong output.
+
+## Environment
+
+Operating system:
+
+Bun or Node version:
+
+React version:
+
+Package version:
+
+Bundler or framework:
+
+## Extra context
+
+Add anything else that could help reproduce the issue.
