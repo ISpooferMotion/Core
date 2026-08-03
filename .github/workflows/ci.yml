@@ -15,12 +15,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+
       - run: bun run verify:lock
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
@@ -30,18 +33,75 @@ jobs:
       - run: bun run docs
       - run: node dist/cli.js --version
       - run: node dist/cli.js --help
+
       - name: Install and smoke-test packed package
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          TARBALL="$(npm pack --silent)"
+          set -euo pipefail
+
+          PACK_DIR="$(mktemp -d)"
           CONSUMER_DIR="$(mktemp -d)"
+
+          cleanup() {
+            rm -rf "$PACK_DIR" "$CONSUMER_DIR"
+          }
+
+          trap cleanup EXIT
+
+          npm pack \
+            --ignore-scripts \
+            --pack-destination "$PACK_DIR" \
+            >/dev/null
+
+          TARBALL_PATH="$(find "$PACK_DIR" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+
+          if [[ -z "$TARBALL_PATH" || ! -f "$TARBALL_PATH" ]]; then
+            echo "Packed tarball was not created."
+            exit 1
+          fi
+
+          echo "Testing package: $TARBALL_PATH"
+
           cd "$CONSUMER_DIR"
+
           npm init -y >/dev/null
-          npm install --ignore-scripts "$GITHUB_WORKSPACE/$TARBALL" react@19 react-dom@19
-          node --input-type=module -e "import('@ispoofermotion/core').then(m => { if (!m.createApp || !m.getFocusedId) process.exit(1) })"
-          node -e "const m=require('@ispoofermotion/core'); if (!m.createApp || !m.getFocusedId) process.exit(1)"
+
+          npm install \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            "$TARBALL_PATH" \
+            react@19 \
+            react-dom@19
+
+          node --input-type=module <<'NODE'
+          const module = await import("@ispoofermotion/core");
+
+          if (typeof module.createApp !== "function") {
+            throw new Error("ESM export createApp is missing.");
+          }
+
+          if (typeof module.getFocusedId !== "function") {
+            throw new Error("ESM export getFocusedId is missing.");
+          }
+          NODE
+
+          node <<'NODE'
+          const module = require("@ispoofermotion/core");
+
+          if (typeof module.createApp !== "function") {
+            throw new Error("CommonJS export createApp is missing.");
+          }
+
+          if (typeof module.getFocusedId !== "function") {
+            throw new Error("CommonJS export getFocusedId is missing.");
+          }
+          NODE
+
           test -f node_modules/@ispoofermotion/core/dist/styles.css
+          test -x node_modules/.bin/ism-core
+
           ./node_modules/.bin/ism-core --version
           ./node_modules/.bin/ism-core --help
 
@@ -49,12 +109,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+
       - run: bun run verify:lock
       - run: bun install --frozen-lockfile
       - run: npm install --no-save --package-lock=false --legacy-peer-deps react@18 react-dom@18 @types/react@18 @types/react-dom@18
