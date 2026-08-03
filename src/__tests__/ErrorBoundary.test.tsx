@@ -103,7 +103,7 @@ describe("ISMCoreErrorBoundary", () => {
 		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
 
 		// Fix the underlying condition and let the parent re-render with fresh
-		// children *before* clicking retry -- retry only clears the boundary's
+		// children *before* clicking retry  retry only clears the boundary's
 		// caught-error state, it doesn't refresh props.children by itself. If we
 		// clicked retry first, it would re-render against the still-stale
 		// (throwing) children and immediately re-catch.

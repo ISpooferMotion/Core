@@ -5,7 +5,7 @@ import type { AriaRole, ReactNode } from "react";
  *
  * Implementations must be synchronous: `getState` reads from storage
  * inline during a widget's first registration in a frame, so an async
- * adapter (e.g. IndexedDB, a network-backed store) is not supported here --
+ * adapter (e.g. IndexedDB, a network-backed store) is not supported here
  * load such data before mounting and seed it via a synchronous adapter
  * (e.g. an in-memory Map) instead.
  *
@@ -16,8 +16,8 @@ export interface StorageAdapter {
 	get(key: string): unknown;
 	/** Store `value` under `key`, overwriting any existing value. */
 	set(key: string, value: unknown): void;
-	/** Remove any stored value for `key`. A no-op if nothing is stored. */
-	delete(key: string): void;
+	/** Remove any stored value for `key`. Optional because the runtime never deletes persisted values implicitly. */
+	delete?(key: string): void;
 }
 
 /**
@@ -92,6 +92,8 @@ export interface FrameRenderProps {
 	id: string;
 	/** Current persistent state (type-erased) */
 	state: unknown;
+	/** Stable identifier for the createApp runtime that owns this widget. */
+	runtimeId: string;
 	/** Update this widget's persistent state. Accepts a direct value or updater function. */
 	setState: (updater: unknown) => void;
 	/** Arguments passed to the widget function by the user */
@@ -104,7 +106,7 @@ export interface FrameRenderProps {
 
 /**
  * Props received by a widget's render function.
- * Fully typed -- widget authors work with these, never with FrameRenderProps.
+ * Fully typed  widget authors work with these, never with FrameRenderProps.
  *
  * @typeParam S - The shape of this widget's persistent state
  * @typeParam A - Tuple type of the arguments the widget function accepts
@@ -114,6 +116,8 @@ export interface WidgetRenderProps<S, A extends unknown[] = unknown[]> {
 	id: string;
 	/** Current persistent state */
 	state: S;
+	/** Stable identifier for the createApp runtime that owns this widget. */
+	runtimeId?: string;
 	/** Update this widget's persistent state. Triggers a re-render. */
 	setState: (updater: S | ((prev: S) => S)) => void;
 	/** Arguments passed to the widget function by the user */
@@ -146,7 +150,7 @@ export interface WidgetConfig<S, A extends unknown[] = unknown[], R = void> {
 	/**
 	 * Unique name for this widget type (e.g., `"Button"`, `"Slider"`).
 	 *
-	 * Must be non-empty and must not contain `/`, `#`, or whitespace --
+	 * Must be non-empty and must not contain `/`, `#`, or whitespace
 	 * these are reserved characters in the ID composition system.
 	 */
 	name: string;
@@ -169,7 +173,7 @@ export interface WidgetConfig<S, A extends unknown[] = unknown[], R = void> {
 
 	/**
 	 * Render this widget to a React element.
-	 * Called by the React bridge during the commit phase.
+	 * Called by the React bridge during React's render phase. Keep it pure and avoid side effects.
 	 *
 	 * Access `props.widgetProps` and spread it onto your root element
 	 * to participate in the CSS hook and accessibility systems.
@@ -183,9 +187,9 @@ export interface WidgetConfig<S, A extends unknown[] = unknown[], R = void> {
 	getReturnValue: (state: S, ...args: A) => R;
 
 	/**
-	 * Reset transient state after each frame.
-	 * Called once per frame after React commits, for widgets that were rendered.
-	 * Use this to clear one-shot event flags (e.g., `clicked` on a Button).
+	 * Reset transient state immediately after {@link getReturnValue} during the draw pass.
+	 * Use this to clear one-shot event flags (e.g., `clicked` on a Button) so
+	 * development-only React StrictMode render retries cannot process them twice.
 	 *
 	 * @example
 	 * ```ts
@@ -221,6 +225,8 @@ export interface FrameEntry {
 	children: FrameEntry[];
 	/** Default state for initializing new instances */
 	defaultState: unknown;
+	/** State snapshot observed during the draw pass and used for this render. */
+	renderState: unknown;
 	/** Whether the state is persisted across sessions */
 	persistent: boolean;
 	/**
@@ -233,9 +239,6 @@ export interface FrameEntry {
 	 * Bridges from type-erased FrameRenderProps to the typed widget render function.
 	 */
 	renderFn: (props: FrameRenderProps) => ReactNode;
-	/**
-	 * Optional closure to reset transient state after each frame.
-	 * Created by defineWidget from WidgetConfig.consumeState.
-	 */
-	consumeStateFn?: (state: unknown) => unknown;
+	/** Optional accessible description rendered by the React bridge. */
+	a11yDescription?: string;
 }

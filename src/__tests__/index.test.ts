@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defineWidget } from "../defineWidget";
 import {
 	end,
 	getContext,
@@ -20,26 +21,30 @@ let runtime: Runtime;
 
 beforeEach(() => {
 	vi.useFakeTimers();
+
 	runtime = new Runtime();
 	runtime.registerApp(() => {});
 	setActiveRuntime(runtime);
 });
 
 afterEach(() => {
+	if (runtime.isAppMounted()) {
+		runtime.unregisterApp();
+	}
+
+	mountedRuntimes.clear();
+	setActiveRuntime(null);
 	vi.useRealTimers();
 });
 
-function drawPass(fn: () => void) {
+function drawPass(callback: () => void): void {
 	runtime.beginFrame();
-	fn();
+	callback();
 	runtime.endFrame();
 }
 
-// --- pushId / popId ---
-
 describe("pushId / popId", () => {
 	it("throws when pushId is called outside a draw pass", () => {
-		// runtime is active but not in a draw pass (beginFrame not called)
 		expect(() => pushId("scope-1")).toThrow("[ism]");
 	});
 
@@ -50,8 +55,11 @@ describe("pushId / popId", () => {
 	it("applies the pushed segment as a prefix to subsequent widget IDs", () => {
 		drawPass(() => {
 			pushId("row-1");
+
 			const id = runtime.buildId("Button", "ok");
+
 			popId();
+
 			expect(id).toContain("row-1");
 			expect(id).not.toContain("row-2");
 		});
@@ -60,16 +68,18 @@ describe("pushId / popId", () => {
 	it("pops correctly and restores the outer prefix", () => {
 		drawPass(() => {
 			const outerIdBefore = runtime.buildId("Label", "outer");
+
 			pushId("inner");
+
 			const innerId = runtime.buildId("Label", "inner-label");
+
 			popId();
+
 			expect(outerIdBefore).not.toContain("inner/");
 			expect(innerId).toContain("inner/");
 		});
 	});
 });
-
-// --- pushContext / popContext / getContext ---
 
 describe("pushContext / popContext / getContext", () => {
 	it("throws when any context function is called outside a draw pass", () => {
@@ -78,12 +88,15 @@ describe("pushContext / popContext / getContext", () => {
 		expect(() => getContext("theme")).toThrow("[ism]");
 	});
 
-	it("round-trips a value through push / get / pop", () => {
+	it("round-trips a value through push, get, and pop", () => {
 		drawPass(() => {
 			pushContext("theme", "dark");
-			const val = getContext<string>("theme");
+
+			const value = getContext<string>("theme");
+
 			popContext("theme");
-			expect(val).toBe("dark");
+
+			expect(value).toBe("dark");
 		});
 	});
 
@@ -97,10 +110,15 @@ describe("pushContext / popContext / getContext", () => {
 		drawPass(() => {
 			pushContext("size", "sm");
 			pushContext("size", "lg");
+
 			expect(getContext<string>("size")).toBe("lg");
+
 			popContext("size");
+
 			expect(getContext<string>("size")).toBe("sm");
+
 			popContext("size");
+
 			expect(getContext<string>("size")).toBeUndefined();
 		});
 	});
@@ -109,15 +127,15 @@ describe("pushContext / popContext / getContext", () => {
 		drawPass(() => {
 			pushContext("disabled", true);
 			pushContext("theme", "dark");
+
 			expect(getContext<boolean>("disabled")).toBe(true);
 			expect(getContext<string>("theme")).toBe("dark");
+
 			popContext("theme");
 			popContext("disabled");
 		});
 	});
 });
-
-// --- pushLayer / popLayer ---
 
 describe("pushLayer / popLayer", () => {
 	it("throws when called outside a draw pass", () => {
@@ -128,8 +146,11 @@ describe("pushLayer / popLayer", () => {
 	it("routes subsequent registrations to the named layer", () => {
 		drawPass(() => {
 			pushLayer("modal");
+
 			expect(runtime.getActiveLayer()).toBe("modal");
+
 			popLayer();
+
 			expect(runtime.getActiveLayer()).toBe("default");
 		});
 	});
@@ -138,12 +159,11 @@ describe("pushLayer / popLayer", () => {
 		drawPass(() => {
 			pushLayer("tooltip");
 			popLayer();
+
 			expect(runtime.getActiveLayer()).toBe("default");
 		});
 	});
 });
-
-// --- end() ---
 
 describe("end()", () => {
 	it("throws when called outside a draw pass", () => {
@@ -151,48 +171,51 @@ describe("end()", () => {
 	});
 });
 
-// --- markDirty() ---
-
 describe("markDirty()", () => {
 	it("dispatches to all mounted runtimes", async () => {
 		let count = 0;
-		const r2 = new Runtime();
-		r2.registerApp(() => {
+
+		const secondRuntime = new Runtime();
+
+		secondRuntime.registerApp(() => {
 			count++;
 		});
 
 		expect(mountedRuntimes.size).toBe(2);
 
 		markDirty();
-		await Promise.resolve(); // flush microtask queue
+		await Promise.resolve();
+
 		expect(count).toBeGreaterThanOrEqual(1);
 
-		r2.unregisterApp();
+		secondRuntime.unregisterApp();
 	});
 
 	it("coalesces multiple calls in the same microtask", async () => {
 		let count = 0;
-		const r = new Runtime();
-		r.registerApp(() => {
+
+		const secondRuntime = new Runtime();
+
+		secondRuntime.registerApp(() => {
 			count++;
 		});
 
-		r.markDirty();
-		r.markDirty();
-		r.markDirty();
+		secondRuntime.markDirty();
+		secondRuntime.markDirty();
+		secondRuntime.markDirty();
 
 		await Promise.resolve();
+
 		expect(count).toBe(1);
 
-		r.unregisterApp();
+		secondRuntime.unregisterApp();
 	});
 });
-
-// --- setFocus / isFocused ---
 
 describe("setFocus / isFocused", () => {
 	it("tracks focus state", () => {
 		setFocus("widget-1");
+
 		expect(isFocused("widget-1")).toBe(true);
 		expect(isFocused("widget-2")).toBe(false);
 	});
@@ -200,74 +223,76 @@ describe("setFocus / isFocused", () => {
 	it("clears focus with null", () => {
 		setFocus("widget-1");
 		setFocus(null);
+
 		expect(isFocused("widget-1")).toBe(false);
 	});
 
 	it("transfers focus between widgets", () => {
 		setFocus("widget-1");
 		setFocus("widget-2");
+
 		expect(isFocused("widget-1")).toBe(false);
 		expect(isFocused("widget-2")).toBe(true);
 	});
 
-	it("does not throw when called with no active runtime (e.g. from a DOM event handler)", () => {
+	it("does not throw with no active runtime", () => {
 		setActiveRuntime(null);
+
 		expect(() => setFocus("widget-1")).not.toThrow();
 		expect(() => isFocused("widget-1")).not.toThrow();
 	});
 
-	it("routes to the id's owning runtime when no runtime is active", () => {
+	it("routes to the ID's owning runtime when no runtime is active", () => {
 		let id = "";
+
 		drawPass(() => {
 			id = runtime.buildId("Button", "save");
 		});
 
-		const other = new Runtime();
-		other.registerApp(() => {});
+		const otherRuntime = new Runtime();
+		otherRuntime.registerApp(() => {});
 
 		setActiveRuntime(null);
 		setFocus(id);
 
 		expect(isFocused(id)).toBe(true);
-		expect(other.isFocused(id)).toBe(false);
+		expect(otherRuntime.isFocused(id)).toBe(false);
 
-		other.unregisterApp();
+		otherRuntime.unregisterApp();
 	});
 
-	it("broadcasts to every mounted runtime for an unowned id with no active runtime", () => {
-		const other = new Runtime();
-		other.registerApp(() => {});
+	it("broadcasts to every mounted runtime for an unowned ID", () => {
+		const otherRuntime = new Runtime();
+		otherRuntime.registerApp(() => {});
 
 		setActiveRuntime(null);
 		setFocus("not-yet-drawn");
 
 		expect(runtime.isFocused("not-yet-drawn")).toBe(true);
-		expect(other.isFocused("not-yet-drawn")).toBe(true);
+		expect(otherRuntime.isFocused("not-yet-drawn")).toBe(true);
 		expect(isFocused("not-yet-drawn")).toBe(true);
 
-		other.unregisterApp();
+		otherRuntime.unregisterApp();
 	});
 });
-
-// --- getFocusedId ---
 
 describe("getFocusedId", () => {
 	it("returns null when nothing is focused", () => {
 		expect(getFocusedId()).toBeNull();
 	});
 
-	it("returns the currently focused id", () => {
+	it("returns the currently focused ID", () => {
 		setFocus("widget-1");
+
 		expect(getFocusedId()).toBe("widget-1");
 	});
 
 	it("throws when called with no active runtime", () => {
 		setActiveRuntime(null);
+
 		expect(() => getFocusedId()).toThrow("[ism]");
 	});
 });
-
-// --- memoBlock ---
 
 describe("memoBlock", () => {
 	it("throws when called outside a draw pass", () => {
@@ -275,92 +300,265 @@ describe("memoBlock", () => {
 	});
 
 	it("executes the closure on first call", () => {
-		let execCount = 0;
+		let executionCount = 0;
+
 		drawPass(() => {
 			memoBlock("test", [1], () => {
-				execCount++;
+				executionCount++;
 			});
 		});
-		expect(execCount).toBe(1);
+
+		expect(executionCount).toBe(1);
 	});
 
-	it("skips the closure when deps have not changed", () => {
-		let execCount = 0;
-		const draw = () =>
+	it("skips the closure when dependencies have not changed", () => {
+		let executionCount = 0;
+
+		const draw = () => {
 			memoBlock("test", [42], () => {
-				execCount++;
+				executionCount++;
 			});
+		};
 
 		drawPass(draw);
 		drawPass(draw);
 		drawPass(draw);
 
-		expect(execCount).toBe(1);
+		expect(executionCount).toBe(1);
 	});
 
-	it("re-executes when a dep changes", () => {
-		let execCount = 0;
+	it("re-executes when a dependency changes", () => {
+		let executionCount = 0;
 
-		drawPass(() =>
+		drawPass(() => {
 			memoBlock("test", [1], () => {
-				execCount++;
-			}),
-		);
-		drawPass(() =>
-			memoBlock("test", [2], () => {
-				execCount++;
-			}),
-		);
-		drawPass(() =>
-			memoBlock("test", [2], () => {
-				execCount++;
-			}),
-		);
+				executionCount++;
+			});
+		});
 
-		expect(execCount).toBe(2); // once for dep=1, once for dep=2
+		drawPass(() => {
+			memoBlock("test", [2], () => {
+				executionCount++;
+			});
+		});
+
+		drawPass(() => {
+			memoBlock("test", [2], () => {
+				executionCount++;
+			});
+		});
+
+		expect(executionCount).toBe(2);
 	});
 
-	it("uses a __memo__ namespace that does not collide with widget IDs", () => {
+	it("snapshots a mutable dependency array", () => {
+		let executions = 0;
+		const dependencies = [1];
+
+		const draw = () => {
+			memoBlock("mutable-deps", dependencies, () => {
+				executions++;
+			});
+		};
+
+		drawPass(draw);
+
+		dependencies[0] = 2;
+
+		drawPass(draw);
+
+		expect(executions).toBe(2);
+	});
+
+	it("uses a memo namespace that does not collide with widget IDs", () => {
 		drawPass(() => {
 			memoBlock("settings", [1], () => {});
-			// A widget named MemoBlock at the same scope should not collide
+
 			const id = runtime.buildId("MemoBlock", "settings");
-			// The memoBlock key lives in __memo__ namespace; no duplicate warning fired
+
 			expect(id).toContain("MemoBlock");
 			expect(id).not.toContain("__memo__");
 		});
 	});
 
-	it("scopes memo key to the current ID stack", () => {
-		let capturedKey1 = "";
-		let capturedKey2 = "";
+	it("gives repeated memo blocks distinct stable widget IDs", () => {
+		const Widget = defineWidget<Record<string, never>, [label: string], void>({
+			name: "MemoItem",
+			defaultState: {},
+			render: () => null,
+			getReturnValue: () => undefined,
+		});
+
+		const draw = () => {
+			memoBlock("same", [], () => Widget("item"));
+			memoBlock("same", [], () => Widget("item"));
+		};
+
+		drawPass(draw);
+
+		const firstIds = runtime
+			.getFrameBuffer()
+			.get("default")
+			?.map((entry) => entry.id);
+
+		drawPass(draw);
+
+		const secondIds = runtime
+			.getFrameBuffer()
+			.get("default")
+			?.map((entry) => entry.id);
+
+		expect(firstIds).toEqual(secondIds);
+		expect(new Set(firstIds).size).toBe(2);
+	});
+
+	it("rebuilds a cached subtree when one of its widget IDs is already used", () => {
+		const Widget = defineWidget<Record<string, never>, [label: string], void>({
+			name: "MemoCollision",
+			defaultState: {},
+			render: () => null,
+			getReturnValue: () => undefined,
+		});
 
 		drawPass(() => {
-			// Two memoBlocks with the same id but different pushId scopes
+			memoBlock("block", [], () => Widget("item"));
+		});
+
+		drawPass(() => {
+			pushId("block");
+			Widget("item");
+			popId();
+
+			memoBlock("block", [], () => Widget("item"));
+		});
+
+		const ids =
+			runtime
+				.getFrameBuffer()
+				.get("default")
+				?.map((entry) => entry.id) ?? [];
+
+		expect(new Set(ids).size).toBe(ids.length);
+	});
+
+	it("invalidates a memo block when contained widget state changes", () => {
+		let executions = 0;
+		let observed = false;
+
+		const Event = defineWidget<{ clicked: boolean }, [label: string], boolean>({
+			name: "MemoEvent",
+			defaultState: { clicked: false },
+			render: () => null,
+			getReturnValue: (state) => state.clicked,
+			consumeState: (state) => ({ ...state, clicked: false }),
+		});
+
+		drawPass(() => {
+			memoBlock("events", [], () => {
+				executions++;
+				Event("open");
+			});
+		});
+
+		runtime.setState("events/MemoEvent/open", { clicked: true });
+
+		drawPass(() => {
+			memoBlock("events", [], () => {
+				executions++;
+				observed = Event("open");
+			});
+		});
+
+		expect(executions).toBe(2);
+		expect(observed).toBe(true);
+	});
+
+	it("restores runtime stacks when capture throws", () => {
+		drawPass(() => {
+			pushId("outer");
+			pushContext("theme", "dark");
+			pushLayer("overlay");
+
+			const stateRevision = runtime.getInspectionRevision("state");
+
+			expect(() => {
+				memoBlock("broken", [], () => {
+					popId();
+					popContext("theme");
+					popLayer();
+					throw new Error("boom");
+				});
+			}).toThrow("boom");
+
+			expect(runtime.getInspectionRevision("state")).toBe(stateRevision);
+			expect(getContext("theme")).toBe("dark");
+			expect(runtime.getActiveLayer()).toBe("overlay");
+
+			popLayer();
+			popContext("theme");
+			popId();
+		});
+	});
+
+	it("rejects and restores unbalanced runtime stacks", () => {
+		drawPass(() => {
+			pushId("outer");
+			pushContext("theme", "dark");
+			pushLayer("overlay");
+
+			expect(() => {
+				memoBlock("unbalanced", [], () => {
+					pushId("leaked-id");
+					pushContext("leaked-context", true);
+					pushLayer("leaked-layer");
+				});
+			}).toThrow("runtime stacks unbalanced");
+
+			expect(getContext("theme")).toBe("dark");
+			expect(getContext("leaked-context")).toBeUndefined();
+			expect(runtime.getActiveLayer()).toBe("overlay");
+
+			popLayer();
+			popContext("theme");
+			popId();
+		});
+	});
+
+	it("scopes memo keys to the current ID stack", () => {
+		let capturedKeyOne = "";
+		let capturedKeyTwo = "";
+
+		drawPass(() => {
 			runtime.pushIdSegment("scope-a");
-			// Capture the key indirectly by checking cache hit behavior
+
 			let ran = false;
+
 			memoBlock("shared-id", [1], () => {
 				ran = true;
-				capturedKey1 = "scope-a ran";
+				capturedKeyOne = "scope-a ran";
 			});
+
 			runtime.popIdSegment();
+
 			expect(ran).toBe(true);
 		});
 
 		drawPass(() => {
 			runtime.pushIdSegment("scope-b");
+
 			let ran = false;
+
 			memoBlock("shared-id", [1], () => {
 				ran = true;
-				capturedKey2 = "scope-b ran";
+				capturedKeyTwo = "scope-b ran";
 			});
+
 			runtime.popIdSegment();
-			// scope-b's memoBlock runs fresh because its key is different
+
 			expect(ran).toBe(true);
 		});
 
-		expect(capturedKey1).toBe("scope-a ran");
-		expect(capturedKey2).toBe("scope-b ran");
+		expect(capturedKeyOne).toBe("scope-a ran");
+		expect(capturedKeyTwo).toBe("scope-b ran");
 	});
 });

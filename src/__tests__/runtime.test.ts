@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getRuntimeForId, Runtime, setActiveRuntime } from "../runtime";
+import {
+	getRuntimeForId,
+	mountedRuntimes,
+	Runtime,
+	setActiveRuntime,
+} from "../runtime";
 
 let runtime: Runtime;
 beforeEach(() => {
@@ -9,6 +14,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	if (runtime.isAppMounted()) runtime.unregisterApp();
+	mountedRuntimes.clear();
+	setActiveRuntime(null);
 	vi.useRealTimers();
 });
 
@@ -88,6 +96,50 @@ describe("ID collision", () => {
 		});
 	});
 
+	it("keeps structurally different slash-containing labels distinct", () => {
+		registerApp();
+		let flat = "";
+		let nested = "";
+		drawPass(() => {
+			flat = runtime.buildId("Button", "a/Button/b");
+		});
+		drawPass(() => {
+			const parentId = runtime.buildId("Panel", "a");
+			const parent = {
+				id: parentId,
+				widgetName: "Panel",
+				args: [],
+				scoped: true,
+				children: [],
+				defaultState: {},
+				renderState: {},
+				persistent: false,
+				widgetProps: {
+					"data-ism-widget": "Panel",
+					"data-ism-id": parentId,
+					className: "ism-widget ism-panel",
+				},
+				renderFn: () => null,
+			};
+			runtime.getCurrentParentChildren().push(parent);
+			runtime.pushScope(parentId, "a", parent);
+			nested = runtime.buildId("Button", "b");
+			runtime.popScope();
+		});
+		expect(flat).not.toBe(nested);
+		expect(flat).toContain("%2F");
+	});
+
+	it("never returns a suffix that was already allocated as a literal label", () => {
+		registerApp();
+		drawPass(() => {
+			const literal = runtime.buildId("Button", "X__2");
+			const first = runtime.buildId("Button", "X");
+			const duplicate = runtime.buildId("Button", "X");
+			expect(new Set([literal, first, duplicate]).size).toBe(3);
+		});
+	});
+
 	it("### convention uses only text after ### as ID", () => {
 		registerApp();
 		drawPass(() => {
@@ -124,6 +176,7 @@ describe("state GC", () => {
 				scoped: false,
 				children: [],
 				defaultState: {},
+				renderState: {},
 				persistent: false,
 				widgetProps: {
 					"data-ism-widget": "Button",
@@ -176,6 +229,7 @@ describe("state GC", () => {
 						scoped: false,
 						children: [],
 						defaultState: {},
+						renderState: {},
 						persistent: false,
 						widgetProps: {
 							"data-ism-widget": "Button",
@@ -216,6 +270,7 @@ describe("scope management", () => {
 				scoped: true,
 				children: [],
 				defaultState: {},
+				renderState: {},
 				persistent: false,
 				widgetProps: {
 					"data-ism-widget": "Panel",
@@ -235,6 +290,7 @@ describe("scope management", () => {
 				scoped: false,
 				children: [],
 				defaultState: {},
+				renderState: {},
 				persistent: false,
 				widgetProps: {
 					"data-ism-widget": "Button",
@@ -250,6 +306,7 @@ describe("scope management", () => {
 			expect(root!.length).toBe(1);
 			expect(root![0]!.children.length).toBe(1);
 			expect(root![0]!.children[0]!.id).toBe(childId);
+			expect(childId.startsWith(`${parentId}/`)).toBe(true);
 		});
 	});
 });
@@ -270,6 +327,88 @@ describe("markDirty batching", () => {
 		// All three calls should be batched into one trigger
 		await Promise.resolve(); // flush microtask queue
 		expect(renderCount).toBe(1);
+	});
+
+	it("cancels a queued rerender across an unregister/register lifecycle", async () => {
+		const trigger = vi.fn();
+		runtime.registerApp(trigger);
+		runtime.markDirty();
+		runtime.unregisterApp();
+		runtime.registerApp(trigger);
+
+		await Promise.resolve();
+		expect(trigger).not.toHaveBeenCalled();
+
+		runtime.markDirty();
+		await Promise.resolve();
+		expect(trigger).toHaveBeenCalledTimes(1);
+
+		runtime.unregisterApp();
+	});
+});
+
+// --- Inspection revisions and frame-pool retention ---
+
+describe("runtime diagnostics", () => {
+	function addFrameEntry(label: string): string {
+		const id = runtime.buildId("Diagnostic", label);
+		const entry = runtime.acquireFrameEntry();
+		entry.id = id;
+		entry.widgetName = "Diagnostic";
+		entry.args = [label];
+		entry.scoped = false;
+		entry.defaultState = { count: 0 };
+		entry.renderState = runtime.getState(id, { count: 0 });
+		entry.persistent = false;
+		entry.widgetProps = {
+			"data-ism-widget": "Diagnostic",
+			"data-ism-id": id,
+			className: "ism-widget ism-diagnostic",
+		};
+		entry.renderFn = () => null;
+		runtime.getCurrentParentChildren().push(entry);
+		return id;
+	}
+
+	it("advances inspection revisions only when tree or state data changes", () => {
+		registerApp();
+		let id = "";
+		drawPass(() => {
+			id = addFrameEntry("same");
+		});
+		const firstTree = runtime.getInspectionRevision("tree");
+		const firstState = runtime.getInspectionRevision("state");
+
+		drawPass(() => {
+			addFrameEntry("same");
+		});
+		expect(runtime.getInspectionRevision("tree")).toBe(firstTree);
+		expect(runtime.getInspectionRevision("state")).toBe(firstState);
+
+		runtime.setState(id, { count: 1 });
+		expect(runtime.getInspectionRevision("state")).toBe(firstState + 1);
+
+		drawPass(() => {
+			addFrameEntry("different");
+		});
+		expect(runtime.getInspectionRevision("tree")).toBe(firstTree + 1);
+	});
+
+	it("trims the retained frame pool after a transient large frame", () => {
+		registerApp();
+		drawPass(() => {
+			for (let index = 0; index < 1000; index++) addFrameEntry(String(index));
+		});
+		drawPass(() => {
+			addFrameEntry("small");
+		});
+
+		const retained = (
+			runtime as unknown as {
+				framePool: { pool: unknown[] };
+			}
+		).framePool.pool.length;
+		expect(retained).toBeLessThanOrEqual(128);
 	});
 });
 
@@ -346,21 +485,5 @@ describe("getRuntimeForId", () => {
 
 		warnSpy.mockRestore();
 		other.unregisterApp();
-	});
-
-	it("registerExternalId lets hand-constructed sub-ids resolve to their owning runtime", () => {
-		registerApp();
-		let id = "";
-		drawPass(() => {
-			id = runtime.buildId("DevTools", undefined);
-		});
-
-		const subId = `${id}/close`;
-		expect(getRuntimeForId(subId)).toBeUndefined();
-
-		runtime.registerExternalId(subId);
-		expect(getRuntimeForId(subId)).toBe(runtime);
-
-		runtime.unregisterApp();
 	});
 });

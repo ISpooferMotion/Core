@@ -7,38 +7,56 @@ on:
     branches: ["main"]
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Test (with coverage thresholds)
-        run: bun run test:coverage
-
-      - name: Build
-        run: bun run build
-
-      - name: Setup Node (for the plain-Node CLI smoke test)
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - name: Smoke test built CLI under plain Node
+      - run: bun run verify:lock
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test:coverage
+      - run: bun run build
+      - run: bun run docs
+      - run: node dist/cli.js --version
+      - run: node dist/cli.js --help
+      - name: Install and smoke-test packed package
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
-          node dist/cli.js --version
-          node dist/cli.js --help
+          TARBALL="$(npm pack --silent)"
+          CONSUMER_DIR="$(mktemp -d)"
+          cd "$CONSUMER_DIR"
+          npm init -y >/dev/null
+          npm install --ignore-scripts "$GITHUB_WORKSPACE/$TARBALL" react@19 react-dom@19
+          node --input-type=module -e "import('@ispoofermotion/core').then(m => { if (!m.createApp || !m.getFocusedId) process.exit(1) })"
+          node -e "const m=require('@ispoofermotion/core'); if (!m.createApp || !m.getFocusedId) process.exit(1)"
+          test -f node_modules/@ispoofermotion/core/dist/styles.css
+          ./node_modules/.bin/ism-core --version
+          ./node_modules/.bin/ism-core --help
+
+  react-18:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: bun run verify:lock
+      - run: bun install --frozen-lockfile
+      - run: npm install --no-save --package-lock=false --legacy-peer-deps react@18 react-dom@18 @types/react@18 @types/react-dom@18
+      - run: bun run typecheck
+      - run: bun run test

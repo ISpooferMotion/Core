@@ -6,6 +6,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1] - 2026-08-02
+
+### Fixed
+
+- Made one-shot widget events idempotent under React StrictMode and delayed unmount cleanup so StrictMode's development remount cycle does not erase runtime state.
+- Encoded every ID segment, reserved memoized subtree IDs, and resolved literal suffix collisions so structurally different widgets cannot share final IDs.
+- Invalidated memo caches when contained widget state changes, assigned stable identities to repeated memo blocks, and restored scope, ID, context, layer, frame, state, and memo bookkeeping after failed captures.
+- Rejected React hooks inside memoized closures, where cache hits would otherwise change hook order.
+- Scoped DevTools inspection and DOM IDs to the owning runtime, made keyboard focus local to each tab list, captured the exact owning runtime for widget focus handlers, and moved snapshot retention to a weak runtime-keyed cache.
+- Materialized accessibility descriptions in the DOM, rejected null-prototype and custom-prototype default state that cannot preserve its prototype through cloning, bounded cross-runtime collision warnings, and made the unused storage deletion capability optional.
+- Corrected scoped ID composition and guaranteed unique final IDs, preventing state aliasing and duplicate React keys.
+- Hardened memo-block cleanup, dependency snapshots, transient-state consumption, and queued render lifecycle handling.
+- Validated `createApp` configuration at the runtime boundary and aligned generated configuration with `schema.json`.
+- Reworked DevTools tabs for native keyboard accessibility and removed stale/global snapshot caching.
+- Added build-safe publishing, retry-safe release logic, packed-package smoke validation, documentation checks, and expanded React 18/19 CI coverage.
+- Replaced platform-specific cleanup commands and corrected public documentation and error rendering behavior.
+
+### Changed
+
+- Aligned `package.json` and `bun.lock` on TypeScript 5.8.3 and added a lock-consistency check.
+- Bounded retained frame-pool capacity after large transient frames.
+
 ## [3.3.0] - 2026-07-29
 
 ### Added
@@ -45,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Loosened `performance.test.ts`'s widget-draw timing assertion to include warm-up iterations and a median-of-several-runs measurement against a wider, still-meaningful margin, reducing CI flakiness from shared-runner timing variance.
 - `defineConfig()` now throws for a non-finite `layerZIndex` or non-boolean `showDevTools` instead of silently accepting them (e.g. previously a `NaN` could reach a CSS `zIndex` property unnoticed).
 
-**A note on the two type-level items above:** narrowing `role` to `AriaRole` and typing `onKeyDown` against React's event type are, strictly, changes to public type signatures. In practice neither changes runtime behavior, and both only affect code that was already passing an invalid ARIA role or relying on an inaccurate DOM-event type in place of the React event type it was actually receiving -- i.e., code that was already incorrect. `peerDependencies` remains `>=18.0.0` (no consumer-facing requirement changed); CI currently exercises React 19 only, noted in the README as a test-coverage gap rather than a support-range change. On that basis this is released as a **minor** version rather than a major one -- see the version-bump rationale in the project's PR/release notes for the full reasoning.
+**A note on the two type-level items above:** narrowing `role` to `AriaRole` and typing `onKeyDown` against React's event type are, strictly, changes to public type signatures. In practice neither changes runtime behavior, and both only affect code that was already passing an invalid ARIA role or relying on an inaccurate DOM-event type in place of the React event type it was actually receiving -- i.e., code that was already incorrect. `peerDependencies` remains `>=18.0.0` (no consumer-facing requirement changed); CI at that release exercised React 19 only; React 18 coverage is added in 3.3.1. On that basis this is released as a **minor** version rather than a major one -- see the version-bump rationale in the project's PR/release notes for the full reasoning.
 
 ## [3.2.0] - 2026-07-26
 

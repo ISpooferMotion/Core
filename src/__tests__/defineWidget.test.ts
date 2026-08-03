@@ -82,6 +82,17 @@ describe("defineWidget name validation", () => {
 		).toThrow("not structured-cloneable");
 	});
 
+	it("rejects a null-prototype default object", () => {
+		expect(() =>
+			defineWidget({
+				name: "NullPrototype",
+				defaultState: Object.create(null) as Record<string, unknown>,
+				render: () => null,
+				getReturnValue: () => undefined,
+			}),
+		).toThrow("unsupported custom prototype");
+	});
+
 	it("accepts defaultState with Map/Set/Date values", () => {
 		expect(() =>
 			defineWidget({
@@ -185,6 +196,33 @@ describe("conditional widgets", () => {
 	});
 });
 
+// --- Transient state consumption ---
+
+describe("consumeState", () => {
+	it("preserves an explicit undefined consumed value", () => {
+		runtime.registerApp(() => {});
+		const OneShot = defineWidget<boolean | undefined, [], boolean | undefined>({
+			name: "UndefinedOneShot",
+			defaultState: true,
+			render: () => null,
+			getReturnValue: (state) => state,
+			consumeState: () => undefined,
+		});
+
+		runtime.beginFrame();
+		expect(OneShot()).toBe(true);
+		runtime.endFrame();
+
+		runtime.beginFrame();
+		expect(OneShot()).toBeUndefined();
+		runtime.endFrame();
+
+		expect(
+			runtime.getStateStore().has("UndefinedOneShot/UndefinedOneShot"),
+		).toBe(true);
+	});
+});
+
 // --- Loop widgets ---
 
 describe("loop widgets with changing counts", () => {
@@ -266,6 +304,7 @@ describe("widgetProps", () => {
 		entry.renderFn({
 			id: entry.id,
 			state: {},
+			runtimeId: runtime.getInstanceId(),
 			setState: () => {},
 			args: [],
 			children: null,
@@ -305,6 +344,7 @@ describe("widgetProps", () => {
 		entry.renderFn({
 			id: entry.id,
 			state: {},
+			runtimeId: runtime.getInstanceId(),
 			setState: () => {},
 			args: ["Click me"],
 			children: null,

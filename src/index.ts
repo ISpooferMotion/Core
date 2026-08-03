@@ -1,5 +1,5 @@
 /**
- * @ispoofermotion/core -- IMUI runtime for Tauri + React
+ * @ispoofermotion/core  IMUI runtime for Tauri + React
  *
  * @packageDocumentation
  *
@@ -37,14 +37,21 @@
  * ## Stability guarantee
  *
  * See `STABILITY.md` in the repository root. The public API listed below
- * is stable from v3.2.0 onwards. New behavior is always additive -- new
- * optional parameters or new functions. Existing signatures never change.
+ * is stable from v3.2.0 onwards. New behavior is always additive  new
+ * optional parameters or new functions. Existing signatures are preserved
+ * in patch releases; carefully scoped type corrections may occur in minor
+ * releases when runtime behavior is unchanged.
  * (Versions prior to 3.2.0 predate this guarantee; see the changelog.)
  *
  * @since 1.0.0
  */
 
-export * from "./config";
+export type { IsmConfig } from "./config";
+export {
+	DEFAULT_LAYER_Z_INDEX,
+	DEFAULT_SHOW_DEV_TOOLS,
+	defineConfig,
+} from "./config";
 export type { AppOptions } from "./createApp";
 export { createApp, useReactContext } from "./createApp";
 export { DevTools } from "./DevTools";
@@ -60,10 +67,6 @@ export type {
 	WidgetRenderProps,
 } from "./types";
 
-// Runtime convenience functions
-// These are thin, documented wrappers around the runtime singleton,
-// providing a flat API surface for user draw functions.
-
 import * as errors from "./errors";
 import {
 	getActiveRuntime,
@@ -71,6 +74,7 @@ import {
 	getRuntimeForId,
 	mountedRuntimes,
 } from "./runtime";
+import type { FrameEntry } from "./types";
 
 /**
  * Push an ID segment onto the stack.
@@ -81,57 +85,47 @@ import {
  *
  * **Always pair with a matching `popId()` call.**
  *
- * @param id - A stable string identifier (e.g., a database row ID, not a loop index)
+ * @param id - A stable string identifier
  *
  * @since 1.0.0
- *
- * @example
- * ```ts
- * for (const item of items) {
- *   pushId(item.id);
- *   Text(item.name);
- *   if (Button("Delete")) { remove(item.id); markDirty(); }
- *   popId();
- * }
- * ```
  */
 export function pushId(id: string): void {
 	const runtime = getActiveRuntime();
+
 	if (!runtime.isDrawing()) {
 		throw new Error(errors.idStackOutsideDraw("pushId"));
 	}
+
 	runtime.pushIdSegment(id);
 }
 
 /**
  * Pop the most recent ID segment from the stack.
  *
- * Must be paired with a preceding `pushId()`. Calling `popId()` with an
- * empty stack logs a warning and is a no-op.
- *
  * @since 1.0.0
  */
 export function popId(): void {
 	const runtime = getActiveRuntime();
+
 	if (!runtime.isDrawing()) {
 		throw new Error(errors.idStackOutsideDraw("popId"));
 	}
+
 	runtime.popIdSegment();
 }
 
 /**
  * Push an environment context value.
  *
- * @param key Context key (e.g. "disabled")
- * @param value Context value
- *
  * @since 2.0.0
  */
 export function pushContext<T>(key: string, value: T): void {
 	const runtime = getActiveRuntime();
+
 	if (!runtime.isDrawing()) {
 		throw new Error(errors.idStackOutsideDraw("pushContext"));
 	}
+
 	runtime.pushContext(key, value);
 }
 
@@ -142,9 +136,11 @@ export function pushContext<T>(key: string, value: T): void {
  */
 export function popContext(key: string): void {
 	const runtime = getActiveRuntime();
+
 	if (!runtime.isDrawing()) {
 		throw new Error(errors.idStackOutsideDraw("popContext"));
 	}
+
 	runtime.popContext(key);
 }
 
@@ -155,23 +151,26 @@ export function popContext(key: string): void {
  */
 export function getContext<T>(key: string): T | undefined {
 	const runtime = getActiveRuntime();
+
 	if (!runtime.isDrawing()) {
 		throw new Error(errors.idStackOutsideDraw("getContext"));
 	}
+
 	return runtime.getContext<T>(key);
 }
 
 /**
- * Push a layer onto the layer stack. All subsequent root-level widgets
- * will be rendered into this layer (useful for modals/tooltips).
+ * Push a layer onto the layer stack.
  *
  * @since 2.0.0
  */
 export function pushLayer(layerName: string): void {
 	const runtime = getActiveRuntime();
+
 	if (!runtime.isDrawing()) {
 		throw new Error(errors.idStackOutsideDraw("pushLayer"));
 	}
+
 	runtime.pushLayer(layerName);
 }
 
@@ -182,83 +181,84 @@ export function pushLayer(layerName: string): void {
  */
 export function popLayer(): void {
 	const runtime = getActiveRuntime();
+
 	if (!runtime.isDrawing()) {
 		throw new Error(errors.idStackOutsideDraw("popLayer"));
 	}
+
 	runtime.popLayer();
 }
 
-/**
- * Shallow compare two arrays.
- */
-function shallowEqual(a: unknown[], b: unknown[]): boolean {
-	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) {
-		if (a[i] !== b[i]) return false;
+function shallowEqual(a: readonly unknown[], b: readonly unknown[]): boolean {
+	if (a.length !== b.length) {
+		return false;
 	}
+
+	for (let index = 0; index < a.length; index++) {
+		if (a[index] !== b[index]) {
+			return false;
+		}
+	}
+
 	return true;
 }
 
 /**
- * Memoize a subtree of widgets. If dependencies have not changed,
- * the drawClosure will not be executed and the previous frame's UI
- * will be reused, drastically reducing CPU overhead.
- *
- * @param id Unique ID for this block
- * @param deps Array of dependencies to check for changes
- * @param drawClosure Function containing widget calls
+ * Memoize a subtree of widgets.
  *
  * @since 2.0.0
  */
 export function memoBlock(
 	id: string,
-	deps: unknown[],
+	deps: readonly unknown[],
 	drawClosure: () => void,
 ): void {
 	const runtime = getActiveRuntime();
+
 	if (!runtime.isDrawing()) {
 		throw new Error(errors.idStackOutsideDraw("memoBlock"));
 	}
 
-	const memoId = runtime.buildMemoKey(id);
-	const cached = runtime.getMemo(memoId);
+	const identity = runtime.buildMemoIdentity(id);
+	const cached = runtime.getMemo(identity.cacheKey);
 
-	if (cached && shallowEqual(cached.deps, deps)) {
-		runtime.pushCachedSubtree(cached.subtree);
-	} else {
-		// We push an ID segment so that any widgets created inside the closure
-		// get stable IDs relative to this memo block.
-		runtime.pushIdSegment(id);
-		const subtree = runtime.captureSubtree(id, drawClosure);
-		runtime.popIdSegment();
-
-		runtime.setMemo(memoId, deps, subtree);
+	if (
+		cached &&
+		shallowEqual(cached.deps, deps) &&
+		runtime.pushCachedSubtree(cached.subtree)
+	) {
+		return;
 	}
+
+	runtime.pushIdSegment(identity.idSegment);
+
+	let subtree: FrameEntry[];
+
+	try {
+		subtree = runtime.captureSubtree(id, drawClosure);
+	} finally {
+		runtime.popIdSegment();
+	}
+
+	runtime.appendCapturedSubtree(subtree);
+	runtime.setMemo(identity.cacheKey, deps, subtree);
 }
 
 /**
  * Request focus for a specific widget ID.
  *
- * Unlike most functions in this file, `setFocus` may be called outside of
- * a draw pass -- its primary real-world trigger is a DOM `focus`/`blur`
- * event or an async callback (e.g. focusing a newly created item after data
- * loads), neither of which happen during drawing. Resolution order:
- *
- * 1. If a runtime is currently active (mid draw pass), use it.
- * 2. Otherwise, if `id` is already owned by a mounted runtime, use that one.
- * 3. Otherwise (unknown/not-yet-drawn id, or clearing focus with `null`),
- *    apply to every mounted runtime, mirroring `markDirty()`.
- *
  * @since 2.0.0
  */
 export function setFocus(id: string | null): void {
 	const active = getActiveRuntimeOrNull();
+
 	if (active) {
 		active.setFocus(id);
 		return;
 	}
 
 	const owner = id !== null ? getRuntimeForId(id) : undefined;
+
 	if (owner) {
 		owner.setFocus(id);
 		return;
@@ -270,33 +270,34 @@ export function setFocus(id: string | null): void {
 }
 
 /**
- * Check if a specific widget ID currently has focus.
- *
- * Follows the same outside-draw-pass resolution order as {@link setFocus}:
- * the active runtime if one exists, else the runtime that owns `id`, else
- * every mounted runtime.
+ * Check whether a specific widget ID currently has focus.
  *
  * @since 2.0.0
  */
 export function isFocused(id: string): boolean {
 	const active = getActiveRuntimeOrNull();
-	if (active) return active.isFocused(id);
+
+	if (active) {
+		return active.isFocused(id);
+	}
 
 	const owner = getRuntimeForId(id);
-	if (owner) return owner.isFocused(id);
+
+	if (owner) {
+		return owner.isFocused(id);
+	}
 
 	for (const runtime of mountedRuntimes) {
-		if (runtime.isFocused(id)) return true;
+		if (runtime.isFocused(id)) {
+			return true;
+		}
 	}
+
 	return false;
 }
 
 /**
- * Get the currently focused widget ID, if any.
- *
- * Unlike `setFocus`/`isFocused`, this has no `id` to route by, so it can
- * only be resolved unambiguously against the currently active runtime --
- * call it from within a draw pass.
+ * Get the currently focused widget ID.
  *
  * @since 3.3.0
  */
@@ -308,55 +309,22 @@ export function getFocusedId(): string | null {
 /**
  * Close the innermost open scoped widget.
  *
- * Must be called exactly once for every scoped widget call (e.g., a widget
- * defined with `scoped: true`). Calling `end()` more times than there are
- * open scopes logs an error and is a no-op.
- *
  * @since 1.0.0
- *
- * @example
- * ```ts
- * if (Collapsing("Settings")) {
- *   Slider("Volume", 0, 100);
- *   end(); // closes Collapsing
- * }
- * ```
  */
 export function end(): void {
 	const runtime = getActiveRuntime();
+
 	if (!runtime.isDrawing()) {
 		throw new Error(errors.endOutsideDraw());
 	}
+
 	runtime.popScope();
 }
 
 /**
- * Signal that your app's external state has changed and a new frame is needed.
- *
- * You do **not** need to call this after widget interactions -- those trigger
- * re-renders automatically via `setState`. Call `markDirty()` when you change
- * your own variables from outside the draw function (e.g., from a timer,
- * network response, or Tauri event listener).
- *
- * Multiple `markDirty()` calls within the same microtask batch are coalesced
- * into a single re-render.
+ * Signal that external state changed and a new frame is needed.
  *
  * @since 1.0.0
- *
- * @example
- * ```ts
- * // From a Tauri event
- * listen("download_progress", (e) => {
- *   state.progress = e.payload.percent;
- *   markDirty();
- * });
- *
- * // From a timer
- * setInterval(() => {
- *   state.elapsed++;
- *   markDirty();
- * }, 1000);
- * ```
  */
 export function markDirty(): void {
 	for (const runtime of mountedRuntimes) {

@@ -9,7 +9,7 @@
 .ism-widget {
 	box-sizing: border-box;
 	/*
-	 * createApp() wraps every non-default layer (modals, tooltips -- see
+	 * createApp() wraps every non-default layer (modals, tooltips  see
 	 * pushLayer/popLayer) in a fullscreen div with pointer-events: none, so
 	 * clicks pass through the transparent areas to whatever is behind the
 	 * layer. Without this rule, that also makes every widget rendered

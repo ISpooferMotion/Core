@@ -1,17 +1,22 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "layerZIndex": {
-      "type": "number",
-      "description": "Base z-index applied to non-default layers (modals, tooltips, etc.). Defaults to 100.",
-      "default": 100
-    },
-    "showDevTools": {
-      "type": "boolean",
-      "description": "Automatically mount the dockable DevTools UI over your app. Defaults to false.",
-      "default": false
-    }
-  },
-  "additionalProperties": false
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"type": "object",
+	"properties": {
+		"$schema": {
+			"type": "string",
+			"format": "uri",
+			"description": "Schema URL used by editors for validation and autocomplete."
+		},
+		"layerZIndex": {
+			"type": "number",
+			"description": "Base z-index applied to non-default layers (modals, tooltips, etc.). Defaults to 100.",
+			"default": 100
+		},
+		"showDevTools": {
+			"type": "boolean",
+			"description": "Automatically mount the dockable DevTools UI over your app. Defaults to false.",
+			"default": false
+		}
+	},
+	"additionalProperties": false
 }

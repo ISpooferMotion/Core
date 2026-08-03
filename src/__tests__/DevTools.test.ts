@@ -133,6 +133,116 @@ describe("DevTools", () => {
 		expect(container.textContent).toContain("clicked");
 	});
 
+	it("refreshes the State panel immediately when widget state changes", async () => {
+		const Counter = defineWidget<{ count: number }, [], void>({
+			name: "Counter",
+			defaultState: { count: 0 },
+			render: ({ id, state, setState, widgetProps }) =>
+				createElement(
+					"button",
+					{
+						key: id,
+						type: "button" as const,
+						...widgetProps,
+						onClick: () => setState({ count: state.count + 1 }),
+					},
+					`Count: ${state.count}`,
+				),
+			getReturnValue: () => undefined,
+		});
+		const App = createApp(() => Counter(), { showDevTools: true });
+		const root = createRoot(container);
+		act(() => root.render(createElement(App)));
+		await click(container.querySelector('[aria-label="Open DevTools"]'));
+
+		const stateTab = Array.from(
+			container.querySelectorAll('[role="tab"]'),
+		).find((el) => el.textContent === "State");
+		await click(stateTab ?? null);
+		expect(container.textContent).toContain('"count": 0');
+
+		await click(container.querySelector('[data-ism-widget="Counter"]'));
+		expect(container.textContent).toContain('"count": 1');
+		act(() => {
+			root.unmount();
+		});
+	});
+
+	it("supports Home and End keyboard navigation", async () => {
+		const App = createApp(() => Button("Save"), { showDevTools: true });
+		const root = createRoot(container);
+
+		act(() => {
+			root.render(createElement(App));
+		});
+		await click(container.querySelector('[aria-label="Open DevTools"]'));
+
+		const tabs = Array.from(
+			container.querySelectorAll<HTMLElement>('[role="tab"]'),
+		);
+		const elementsTab = tabs.find(
+			(element) => element.textContent === "Elements",
+		);
+		const stateTab = tabs.find((element) => element.textContent === "State");
+
+		stateTab?.focus();
+		await act(async () => {
+			stateTab?.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Home", bubbles: true }),
+			);
+		});
+		expect(document.activeElement).toBe(elementsTab);
+
+		await act(async () => {
+			elementsTab?.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "End", bubbles: true }),
+			);
+		});
+		expect(document.activeElement).toBe(stateTab);
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
+	it("isolates DOM ids and keyboard focus across multiple app roots", async () => {
+		const secondContainer = document.createElement("div");
+		document.body.appendChild(secondContainer);
+		const AppA = createApp(() => Button("A"), { showDevTools: true });
+		const AppB = createApp(() => Button("B"), { showDevTools: true });
+		const rootA = createRoot(container);
+		const rootB = createRoot(secondContainer);
+
+		act(() => {
+			rootA.render(createElement(AppA));
+			rootB.render(createElement(AppB));
+		});
+		await click(container.querySelector('[aria-label="Open DevTools"]'));
+		await click(secondContainer.querySelector('[aria-label="Open DevTools"]'));
+
+		const allIds = Array.from(document.querySelectorAll("[id]"))
+			.map((element) => element.id)
+			.filter(Boolean);
+		expect(new Set(allIds).size).toBe(allIds.length);
+
+		const firstElementsTab = Array.from(
+			container.querySelectorAll<HTMLElement>('[role="tab"]'),
+		).find((element) => element.textContent === "Elements");
+		await act(async () => {
+			firstElementsTab?.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+			);
+		});
+		expect(container.contains(document.activeElement)).toBe(true);
+		expect(secondContainer.contains(document.activeElement)).toBe(false);
+
+		act(() => {
+			rootA.unmount();
+			rootB.unmount();
+		});
+		document.body.removeChild(secondContainer);
+	});
+
 	it("collapses again when the close button is clicked", async () => {
 		const App = createApp(
 			() => {

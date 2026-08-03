@@ -23,3 +23,7 @@ docs/
 # Package manager
 bun.lockb
 coverage/
+
+# Local diagnostics
+core-diagnostics/
+core-diagnostics.zip

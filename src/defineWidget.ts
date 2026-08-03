@@ -29,16 +29,55 @@ function validateDefaultState<S>(name: string, defaultState: S): void {
 	if (typeof defaultState === "function") {
 		throw new Error(errors.invalidDefaultState(name));
 	}
-	// structuredClone is also what runtime.getState() uses to initialize each
-	// instance's state; running it here surfaces non-cloneable defaultState
-	// (nested functions, class instances, DOM nodes, Symbols) at definition
-	// time instead of at an arbitrary later call site.
 	try {
+		assertStructuredState(defaultState);
 		structuredClone(defaultState);
 	} catch (err) {
 		throw new Error(
 			errors.defaultStateNotCloneable(name, errors.getErrorMessage(err)),
 		);
+	}
+}
+
+function assertStructuredState(
+	value: unknown,
+	path = "defaultState",
+	seen = new WeakSet<object>(),
+): void {
+	if (value === null || typeof value !== "object") return;
+	if (seen.has(value)) return;
+	seen.add(value);
+
+	const allowed = [
+		Object.prototype,
+		Array.prototype,
+		Date.prototype,
+		Map.prototype,
+		Set.prototype,
+		RegExp.prototype,
+	];
+	const proto = Object.getPrototypeOf(value);
+	if (!allowed.includes(proto)) {
+		throw new Error(`${path} uses an unsupported custom prototype.`);
+	}
+
+	if (value instanceof Map) {
+		for (const [key, entry] of value) {
+			assertStructuredState(key, `${path}.<key>`, seen);
+			assertStructuredState(entry, `${path}.<value>`, seen);
+		}
+	} else if (value instanceof Set) {
+		for (const entry of value) {
+			assertStructuredState(entry, `${path}.<value>`, seen);
+		}
+	} else if (Array.isArray(value)) {
+		for (const [index, entry] of value.entries()) {
+			assertStructuredState(entry, `${path}[${index}]`, seen);
+		}
+	} else {
+		for (const [key, entry] of Object.entries(value)) {
+			assertStructuredState(entry, `${path}.${key}`, seen);
+		}
 	}
 }
 
@@ -51,6 +90,7 @@ function populateWidgetProps<A extends unknown[]>(
 	id: string,
 	a11y: WidgetA11y<A> | undefined,
 	args: A,
+	descriptionId: string | undefined,
 ): void {
 	props["data-ism-widget"] = widgetName;
 	props["data-ism-id"] = id;
@@ -69,11 +109,8 @@ function populateWidgetProps<A extends unknown[]>(
 		delete props["aria-label"];
 	}
 
-	if (a11y?.description) {
-		// Store description text in a data attribute so makeInteractive can
-		// wire up aria-describedby with a real DOM element if needed.
-		// Widget authors who want full describedby support should use makeInteractive().
-		props["aria-describedby"] = `ism-desc-${id}`;
+	if (a11y?.description && descriptionId) {
+		props["aria-describedby"] = descriptionId;
 	} else {
 		delete props["aria-describedby"];
 	}
@@ -83,7 +120,7 @@ function populateWidgetProps<A extends unknown[]>(
  * Define a new widget type and return its callable function.
  *
  * This is the **only** registration path for widgets. Every widget in the
- * system -- including those in this library -- goes through this function.
+ * system  including those in this library  goes through this function.
  * Do not call runtime internals directly.
  *
  * The returned function is what end users call inside their draw function
@@ -135,12 +172,9 @@ export function defineWidget<S, A extends unknown[], R>(
 		a11y,
 	} = config;
 
-	// Validate at definition time, not call time
 	validateWidgetName(name);
 	validateDefaultState(name, defaultState);
 
-	// Resolve the label extraction strategy.
-	// Default: use the first argument if it's a string.
 	const getLabel: (...args: A) => string | undefined =
 		config.getLabel ??
 		((...args: A) => {
@@ -148,20 +182,17 @@ export function defineWidget<S, A extends unknown[], R>(
 			return typeof first === "string" ? first : undefined;
 		});
 
-	// Build the optional consume closure
 	const consumeStateFn = consumeState
 		? (state: unknown): unknown => consumeState(state as S)
 		: undefined;
 
 	const slug = name.toLowerCase();
 
-	// Build the render closure that bridges from type-erased FrameRenderProps
-	// to the fully-typed WidgetRenderProps.
-	// HOISTED: Created once per widget definition, not per widget call!
 	const renderFn = (props: {
 		id: string;
 		state: unknown;
 		setState: (updater: unknown) => void;
+		runtimeId: string;
 		args: unknown[];
 		children: import("react").ReactNode | null;
 		widgetProps: WidgetProps;
@@ -173,6 +204,7 @@ export function defineWidget<S, A extends unknown[], R>(
 		return render({
 			id: props.id,
 			state: props.state as S,
+			runtimeId: props.runtimeId,
 			setState: typedSetState,
 			args: props.args as unknown as A,
 			children: props.children,
@@ -180,65 +212,72 @@ export function defineWidget<S, A extends unknown[], R>(
 		} satisfies WidgetRenderProps<S, A>);
 	};
 
-	// Return the callable widget function
 	return (...args: A): R => {
 		const runtime = getActiveRuntime();
 
-		// Guard: must be inside a draw frame
 		if (!runtime.isDrawing()) {
 			const label = getLabel(...args);
 			throw new Error(errors.widgetOutsideDraw(name, label));
 		}
 
-		// Extract label and build composite ID
 		const label = getLabel(...args);
 		const id = runtime.buildId(name, label);
 
-		// Look up or initialize persistent state.
-		// The persistent flag must be forwarded here: getState only reads
-		// from storage on the id's first registration this session, and
-		// this is that first registration (createApp's renderEntry call
-		// happens later in the same frame and will see the id already
-		// present in stateStore, so it would never trigger the storage read).
 		const state = runtime.getState<S>(
 			id,
 			defaultState,
 			config.persistent ?? false,
 		);
 
-		// Acquire frame entry from the zero-allocation pool
 		const entry = runtime.acquireFrameEntry();
 		entry.id = id;
 		entry.widgetName = name;
 		entry.args = args as unknown[];
 		entry.scoped = scoped;
 		entry.defaultState = defaultState;
+		entry.renderState = state;
 		entry.persistent = config.persistent ?? false;
 
-		// Mutate the pooled widgetProps object (zero-allocation)
-		populateWidgetProps(entry.widgetProps, name, slug, id, a11y, args);
+		const descriptionId = a11y?.description
+			? runtime.getDomId("description", id)
+			: undefined;
+
+		populateWidgetProps(
+			entry.widgetProps,
+			name,
+			slug,
+			id,
+			a11y,
+			args,
+			descriptionId,
+		);
 
 		entry.renderFn = renderFn;
-		if (consumeStateFn !== undefined) {
-			entry.consumeStateFn = consumeStateFn;
+
+		if (a11y?.description) {
+			entry.a11yDescription = a11y.description;
 		} else {
-			// Reset to undefined in case this pool slot was previously used by
-			// a widget that did have consumeState.
-			delete entry.consumeStateFn;
+			delete entry.a11yDescription;
 		}
 
-		// Register in the current parent's children (scope-aware)
 		runtime.getCurrentParentChildren().push(entry);
 
-		// If this is a scoped widget, push it onto the scope stack.
-		// All subsequent widget calls will become children of this entry
-		// until end() is called.
 		if (scoped) {
 			const displayLabel = label ? extractDisplayLabel(label) : name;
 			runtime.pushScope(id, displayLabel, entry);
 		}
 
-		// Compute and return the user-facing value
-		return getReturnValue(state, ...args);
+		const returnValue = getReturnValue(state, ...args);
+
+		if (consumeStateFn) {
+			runtime.consumeState(
+				id,
+				state,
+				consumeStateFn,
+				config.persistent ?? false,
+			);
+		}
+
+		return returnValue;
 	};
 }

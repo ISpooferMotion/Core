@@ -19,7 +19,7 @@ export interface IsmConfig {
 
 /**
  * Default value for {@link IsmConfig.layerZIndex}.
- * Single source of truth -- consumed by both `createApp` (runtime fallback)
+ * Single source of truth  consumed by both `createApp` (runtime fallback)
  * and the `ism-core init` CLI scaffold, so the two never drift apart.
  *
  * @since 3.3.0
@@ -33,29 +33,20 @@ export const DEFAULT_LAYER_Z_INDEX = 100;
  */
 export const DEFAULT_SHOW_DEV_TOOLS = false;
 
-/**
- * Type helper for defining a configuration.
- *
- * Performs light runtime validation so misconfigurations documented as
- * @throws surface immediately at the call site, rather than manifesting
- * later as a subtle rendering bug (e.g. `NaN` silently reaching a CSS
- * `zIndex` property).
- *
- * @param config The configuration object
- * @returns The configuration object, unchanged
- * @throws {Error} If `layerZIndex` is provided and is not a finite number,
- *   or if `showDevTools` is provided and is not a boolean.
- *
- * @since 3.2.0
- */
-export function defineConfig(config: IsmConfig): IsmConfig {
+interface ResolvedIsmConfig {
+	layerZIndex: number;
+	showDevTools: boolean;
+}
+
+/** Resolve and validate runtime configuration. @internal */
+export function resolveConfig(config: IsmConfig = {}): ResolvedIsmConfig {
 	if (
 		config.layerZIndex !== undefined &&
 		(typeof config.layerZIndex !== "number" ||
 			!Number.isFinite(config.layerZIndex))
 	) {
 		throw new Error(
-			`[ism] defineConfig(): "layerZIndex" must be a finite number, got ${JSON.stringify(config.layerZIndex)}.`,
+			`[ism] Configuration: "layerZIndex" must be a finite number, got ${JSON.stringify(config.layerZIndex)}.`,
 		);
 	}
 	if (
@@ -63,8 +54,28 @@ export function defineConfig(config: IsmConfig): IsmConfig {
 		typeof config.showDevTools !== "boolean"
 	) {
 		throw new Error(
-			`[ism] defineConfig(): "showDevTools" must be a boolean, got ${JSON.stringify(config.showDevTools)}.`,
+			`[ism] Configuration: "showDevTools" must be a boolean, got ${JSON.stringify(config.showDevTools)}.`,
 		);
 	}
+	return {
+		layerZIndex: config.layerZIndex ?? DEFAULT_LAYER_Z_INDEX,
+		showDevTools: config.showDevTools ?? DEFAULT_SHOW_DEV_TOOLS,
+	};
+}
+
+/**
+ * Type helper for defining a configuration.
+ *
+ * Performs light runtime validation so invalid values fail at the call site
+ * rather than reaching rendering code.
+ *
+ * @param config The configuration object.
+ * @returns The configuration object, unchanged.
+ * @throws {Error} If `layerZIndex` is not finite or `showDevTools` is not boolean.
+ *
+ * @since 3.2.0
+ */
+export function defineConfig(config: IsmConfig): IsmConfig {
+	resolveConfig(config);
 	return config;
 }

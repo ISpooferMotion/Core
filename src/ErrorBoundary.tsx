@@ -39,7 +39,7 @@ interface State {
 /**
  * Static style objects for {@link ErrorFallback}.
  *
- * Hoisted to module scope rather than allocated inline on every render --
+ * Hoisted to module scope rather than allocated inline on every render
  * `ErrorFallback` only renders on error, so the perf impact of re-allocating
  * these was always negligible, but keeping them inline was inconsistent with
  * the rest of the codebase's general "don't reallocate static style/data"

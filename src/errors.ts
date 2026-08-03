@@ -133,8 +133,8 @@ export function popDefaultLayer(): string {
 
 /**
  * defaultState failed structuredClone() at defineWidget() time (a nested
- * function, class instance, DOM node, Symbol, etc). Caught here -- rather
- * than only at the first widget call, deep inside a user's app -- so the
+ * function, class instance, DOM node, Symbol, etc). Caught here  rather
+ * than only at the first widget call, deep inside a user's app  so the
  * failure surfaces immediately when the widget is defined.
  */
 export function defaultStateNotCloneable(
@@ -144,7 +144,7 @@ export function defaultStateNotCloneable(
 	return (
 		`${PREFIX} defineWidget("${widgetName}")'s defaultState is not structured-cloneable: ${message} ` +
 		"defaultState must consist of plain objects, arrays, primitives, Map, " +
-		"Set, or Date. Class instances, DOM nodes, Symbols, and functions " +
+		"Set, Date, or RegExp. Class instances, DOM nodes, Symbols, and functions " +
 		"(including nested ones) are not supported."
 	);
 }
@@ -156,7 +156,7 @@ export function defaultStateCloneFailure(id: string, message: string): string {
 	return (
 		`${PREFIX} Failed to initialize state for widget '${id}': ${message} ` +
 		"defaultState must be structured-cloneable (plain objects, arrays, " +
-		"primitives, Map, Set, Date). Class instances, DOM nodes, and functions " +
+		"primitives, Map, Set, Date, RegExp). Class instances, DOM nodes, and functions " +
 		"are not supported."
 	);
 }
@@ -165,11 +165,20 @@ export function defaultStateCloneFailure(id: string, message: string): string {
  * memoBlock's drawClosure left scopes open (or closed extra ones), so the
  * captured subtree cannot be trusted.
  */
-export function memoBlockUnbalancedScope(id: string): string {
+export function memoBlockUnbalancedState(id: string): string {
 	return (
-		`${PREFIX} memoBlock('${id}') closure left an unbalanced scope stack ` +
-		"(a scoped widget was opened without a matching end(), or vice versa). " +
-		"The captured subtree may be incorrect. Make sure every scoped widget " +
-		"inside a memoBlock closure has a matching end() before the closure returns."
+		`${PREFIX} memoBlock('${id}') closure left runtime stacks unbalanced. ` +
+		"Every scoped widget, pushId(), pushContext(), and pushLayer() inside the " +
+		"closure must have a matching end(), popId(), popContext(), or popLayer() " +
+		"before the closure returns."
+	);
+}
+
+/** React hooks inside memoBlock would be skipped on cache hits. */
+export function reactContextInsideMemoBlock(): string {
+	return (
+		`${PREFIX} useReactContext() cannot be called inside memoBlock(). ` +
+		"A memo cache hit skips the closure and would change React's hook order. " +
+		"Read the context before memoBlock() and include the value in its dependencies."
 	);
 }

@@ -1,5 +1,5 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.2/schema.json",
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",
@@ -48,8 +48,12 @@
 			"includes": ["**/__tests__/**"],
 			"linter": {
 				"rules": {
-					"complexity": { "noBannedTypes": "off" },
-					"style": { "noNonNullAssertion": "off" }
+					"complexity": {
+						"noBannedTypes": "off"
+					},
+					"style": {
+						"noNonNullAssertion": "off"
+					}
 				}
 			}
 		}

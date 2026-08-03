@@ -9,7 +9,7 @@ The public API is defined as any symbol exported from the main package entrypoin
 We adhere to the following rules to ensure backward compatibility:
 
 1. **Additive Changes Only:** New behavior will only be introduced additively. We may add new functions, new exported types, or new *optional* parameters to existing functions.
-2. **Signature Preservation:** Existing function signatures and method signatures will **never** be changed in a breaking way in minor or patch releases.
+2. **Signature Preservation:** Existing function and method signatures will not be changed incompatibly in patch releases. Minor releases may include narrowly scoped type corrections that preserve runtime behavior and are documented in the changelog.
 3. **Behavioral Consistency:** The core behavior and side effects of existing functions will remain consistent. If a fundamental behavioral shift is required, it will be introduced as a new function or heavily communicated as a major version bump.
 
 ## Deprecation Policy

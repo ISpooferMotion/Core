@@ -6,7 +6,7 @@ declare global {
 	// reliably supports act()'s synchronous-flush behavior. Vitest's
 	// happy-dom environment doesn't set it automatically the way
 	// Jest + jsdom + @testing-library/react's setup usually does.
-	// `var` is required here -- TS's `declare global` ambient blocks don't
+	// `var` is required here TS's `declare global` ambient blocks don't
 	// permit `let`/`const` for global variable declarations.
 	var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
 }

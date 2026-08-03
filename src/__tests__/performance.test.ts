@@ -12,7 +12,7 @@ beforeEach(() => {
  * Run `fn` a few times and return the median duration in milliseconds.
  *
  * A single wall-clock measurement on a shared CI runner is noisy (GC
- * pauses, CPU contention, and -- on the very first call -- the JIT hasn't
+ * pauses, CPU contention, and  on the very first call  the JIT hasn't
  * optimized the hot path yet). Discarding a warm-up run and taking the
  * median of several timed runs smooths out that noise without requiring a
  * dedicated benchmarking harness. This is a regression smoke test, not a
@@ -61,7 +61,7 @@ describe("500-widget performance budget", () => {
 		};
 
 		const median = medianDurationMs(drawFrame);
-		// Generous on purpose -- this is a smoke test for gross regressions
+		// Generous on purpose  this is a smoke test for gross regressions
 		// (e.g. an accidental O(n^2) path), not a tight perf gate. A single
 		// frame of 500 trivial widgets should never approach 100ms even on a
 		// slow, contended CI runner; a real regression would blow well past it.

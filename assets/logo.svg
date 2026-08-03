@@ -1,4 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="150 150 700 700" width="100%" height="100%">
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="150 150 700 700"
+  width="100%"
+  height="100%"
+  role="img"
+  aria-labelledby="ism-core-logo-title"
+>
+  <title id="ism-core-logo-title">ISMCore logo</title>
   <defs>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@800&amp;display=swap');

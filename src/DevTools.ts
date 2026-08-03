@@ -1,13 +1,10 @@
 import { createElement } from "react";
 import { defineWidget } from "./defineWidget";
 import { getErrorMessage } from "./errors";
-import { makeInteractive } from "./makeInteractive";
-import { getRuntimeForId, mountedRuntimes } from "./runtime";
+import { getRuntimeByInstanceId, type Runtime } from "./runtime";
 import type { FrameEntry } from "./types";
 
 type Tab = "Elements" | "State";
-
-/** Stable tuple of tabs, hoisted so it isn't reallocated on every render. */
 const TABS: readonly Tab[] = ["Elements", "State"];
 
 interface DevToolsState {
@@ -15,64 +12,15 @@ interface DevToolsState {
 	activeTab: Tab;
 }
 
-/**
- * Minimum time between full re-serializations of the tree/state snapshot,
- * in milliseconds. DevTools re-renders on every host app frame while
- * expanded, and `serializeWidgetTree`/`serializeState` do a full
- * JSON.stringify pass over the live tree -- fine for the small apps this
- * ships with, but unbounded for a host app with thousands of widgets.
- * Snapshots refresh at most this often; the panel still shows the most
- * recent snapshot in between, which is more than sufficient for a
- * debugging tool (nobody needs sub-100ms fidelity on a state inspector).
- */
-const SNAPSHOT_THROTTLE_MS = 250;
-
-interface SnapshotCacheEntry {
-	elementsLastSnapshotAt: number;
-	stateLastSnapshotAt: number;
-	elementsText: string;
-	stateText: string;
+interface InspectorCache {
+	elementsRevision: number;
+	stateRevision: number;
+	elements: string;
+	state: string;
 }
 
-/**
- * Snapshot cache, keyed by widget instance `id`.
- *
- * Deliberately *not* a single module-level cache: two separate `createApp()`
- * roots (two mounted apps on the same page, each with its own `DevTools()`
- * call) are two distinct widget instances with distinct composite ids, and
- * must not share a throttle window or overwrite each other's cached text.
- *
- * Each tab tracks its own throttle timestamp so switching tabs always shows
- * that tab's most recent snapshot instead of inheriting whichever tab was
- * viewed last.
- *
- * This map is keyed by composite id, not tied into the runtime's own
- * stateStore/TTL bookkeeping, so it has no automatic GC of its own. Entries
- * are swept opportunistically on every render (see `pruneStaleCacheEntries`)
- * by checking each cached id against `getRuntimeForId`, which is deleted
- * once the runtime that owns it has garbage-collected it. In practice this
- * cache holds at most one entry per mounted DevTools instance, so it stays
- * small regardless.
- */
-const snapshotCache = new Map<string, SnapshotCacheEntry>();
+const snapshotCache = new WeakMap<Runtime, InspectorCache>();
 
-/**
- * Drop cache entries for ids no longer owned by any runtime, i.e. DevTools
- * instances that have stopped being drawn and were already garbage-collected
- * from the owning runtime's own state store.
- */
-function pruneStaleCacheEntries(): void {
-	for (const cachedId of snapshotCache.keys()) {
-		if (!getRuntimeForId(cachedId)) {
-			snapshotCache.delete(cachedId);
-		}
-	}
-}
-
-/**
- * JSON.stringify replacer that renders Maps, Sets, and functions as
- * readable placeholders instead of throwing or silently dropping them.
- */
 function devToolsReplacer(_key: string, value: unknown): unknown {
 	if (value instanceof Map) {
 		return { __type: "Map", entries: Array.from(value.entries()) };
@@ -86,44 +34,69 @@ function devToolsReplacer(_key: string, value: unknown): unknown {
 	return value;
 }
 
-/**
- * Serialize a widget's state for display, tolerating values JSON can't
- * normally express (functions, Map, Set) instead of collapsing to an
- * unhelpful "[object Object]" fallback.
- */
 function serializeState(state: unknown): string {
 	try {
 		return JSON.stringify(state, devToolsReplacer, 2);
-	} catch (err) {
-		return `<unserializable: ${getErrorMessage(err)}>`;
+	} catch (error) {
+		return `<unserializable: ${getErrorMessage(error)}>`;
 	}
 }
 
-/**
- * Serializes a widget subtree to an indented text representation.
- * Used by the Elements tab to display the live widget tree.
- */
 function serializeWidgetTree(entries: FrameEntry[], depth = 0): string {
 	const indent = "  ".repeat(depth);
 	return entries
-		.map((e) => {
+		.map((entry) => {
 			const children =
-				e.children.length > 0
-					? `\n${serializeWidgetTree(e.children, depth + 1)}`
+				entry.children.length > 0
+					? `\n${serializeWidgetTree(entry.children, depth + 1)}`
 					: "";
-			return `${indent}${e.widgetName} (${e.id})${children}`;
+			return `${indent}${entry.widgetName} (${entry.id})${children}`;
 		})
 		.join("\n");
 }
 
-/**
- * A dockable DevTools widget for the core IMUI.
- * Provides a tabbed interface containing the Console, Elements, and State.
- */
+function getInspectorText(runtime: Runtime, tab: Tab): string {
+	let cache = snapshotCache.get(runtime);
+	if (!cache) {
+		cache = {
+			elementsRevision: -1,
+			stateRevision: -1,
+			elements: "",
+			state: "",
+		};
+		snapshotCache.set(runtime, cache);
+	}
+
+	if (tab === "Elements") {
+		const revision = runtime.getInspectionRevision("tree");
+		if (cache.elementsRevision !== revision) {
+			cache.elements = Array.from(runtime.getTree().entries())
+				.map(
+					([layer, entries]) =>
+						`[layer: ${layer}]\n${serializeWidgetTree(entries) || "  (empty)"}`,
+				)
+				.join("\n\n");
+			cache.elementsRevision = revision;
+		}
+		return cache.elements || "(no widgets rendered)";
+	}
+
+	const revision = runtime.getInspectionRevision("state");
+	if (cache.stateRevision !== revision) {
+		const stateEntries = Array.from(runtime.getStateStore().entries()).map(
+			([entryId, value]) => `${entryId}:\n${serializeState(value)}`,
+		);
+		cache.state =
+			stateEntries.length > 0 ? stateEntries.join("\n---\n") : "(empty)";
+		cache.stateRevision = revision;
+	}
+	return cache.state || "(empty)";
+}
+
 export const DevTools = defineWidget<DevToolsState, [], void>({
 	name: "DevTools",
 	defaultState: { expanded: false, activeTab: "Elements" },
-	render: ({ id, state, setState }) => {
+	render: ({ id, runtimeId, state, setState }) => {
 		if (!state.expanded) {
 			return createElement(
 				"button",
@@ -152,85 +125,25 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 			);
 		}
 
-		// Snapshot live data from all mounted runtimes, but only for the tab
-		// that's actually visible -- serializing the whole tree and state
-		// store on every render regardless of which tab is open is wasted
-		// work for apps with a large widget tree. Additionally throttled
-		// (see SNAPSHOT_THROTTLE_MS): re-serializing on every single host-app
-		// frame is unnecessary for a debugging panel.
-		// mountedRuntimes is safe to read outside of a draw pass.
-		pruneStaleCacheEntries();
+		const runtime = runtimeId ? getRuntimeByInstanceId(runtimeId) : undefined;
+		const inspectorText = runtime
+			? getInspectorText(runtime, state.activeTab)
+			: "(runtime unavailable)";
+		const domNamespace = runtimeId ?? id.replaceAll("/", "-");
+		const panelId = `${domNamespace}-devtools-panel`;
+		const tabId = (tab: Tab) => `${domNamespace}-devtools-tab-${tab}`;
 
-		// The tab/close sub-ids below (`${id}/tab/${tab}`, `${id}/close`) are
-		// hand-constructed rather than produced by buildId(), so they never
-		// went through the normal id-ownership registration -- makeInteractive's
-		// onFocus/onBlur handlers call getRuntimeForId() on them and silently
-		// no-op when it returns undefined. `id` itself *is* a real widget id
-		// (DevTools is drawn like any other widget), so we can look up its
-		// owning runtime and explicitly register the sub-ids against it.
-		const owningRuntime = getRuntimeForId(id);
-		if (owningRuntime) {
-			for (const tab of TABS) {
-				owningRuntime.registerExternalId(`${id}/tab/${tab}`);
-			}
-			owningRuntime.registerExternalId(`${id}/close`);
-		}
-
-		let cache = snapshotCache.get(id);
-		if (!cache) {
-			cache = {
-				elementsLastSnapshotAt: Number.NEGATIVE_INFINITY,
-				stateLastSnapshotAt: Number.NEGATIVE_INFINITY,
-				elementsText: "",
-				stateText: "",
-			};
-			snapshotCache.set(id, cache);
-		}
-
-		const now = Date.now();
-
-		if (
-			state.activeTab === "Elements" &&
-			now - cache.elementsLastSnapshotAt >= SNAPSHOT_THROTTLE_MS
-		) {
-			cache.elementsText = Array.from(mountedRuntimes)
-				.flatMap((r) =>
-					Array.from(r.getTree().entries()).map(
-						([layer, entries]) =>
-							`[layer: ${layer}]\n${serializeWidgetTree(entries) || "  (empty)"}`,
-					),
-				)
-				.join("\n\n");
-			cache.elementsLastSnapshotAt = now;
-		} else if (
-			state.activeTab === "State" &&
-			now - cache.stateLastSnapshotAt >= SNAPSHOT_THROTTLE_MS
-		) {
-			const stateEntries = Array.from(mountedRuntimes).flatMap((r) =>
-				Array.from(r.getStateStore().entries()).map(
-					([entryId, s]) => `${entryId}:\n${serializeState(s)}`,
-				),
-			);
-			cache.stateText =
-				stateEntries.length > 0 ? stateEntries.join("\n---\n") : "(empty)";
-			cache.stateLastSnapshotAt = now;
-		}
-
-		const elementsText =
-			state.activeTab === "Elements" ? cache.elementsText : "";
-		const stateText = state.activeTab === "State" ? cache.stateText : "";
-
-		// Rendering the expanded devtools dock
 		return createElement(
 			"div",
 			{
 				key: id,
+				"data-ism-devtools-runtime": runtimeId ?? "unknown",
 				style: {
 					position: "fixed",
-					bottom: "0",
-					left: "0",
-					right: "0",
-					height: "35vh", // 35% of viewport height
+					bottom: 0,
+					left: 0,
+					right: 0,
+					height: "35vh",
 					backgroundColor: "rgba(30, 30, 30, 0.98)",
 					color: "white",
 					fontSize: "12px",
@@ -242,7 +155,6 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 					boxShadow: "0 -4px 20px rgba(0,0,0,0.5)",
 				},
 			},
-			// Header / Tab Bar
 			createElement(
 				"div",
 				{
@@ -260,19 +172,38 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 					{ role: "tablist", style: { display: "flex", gap: "2px" } },
 					TABS.map((tab) =>
 						createElement(
-							"div",
+							"button",
 							{
+								type: "button",
 								key: tab,
-								id: `${id}/tab/${tab}`,
-								"aria-controls": `${id}/tabpanel`,
-								...makeInteractive(
-									() => setState({ ...state, activeTab: tab }),
-									{
-										role: "tab",
-										id: `${id}/tab/${tab}`,
-										selected: state.activeTab === tab,
-									},
-								),
+								id: tabId(tab),
+								role: "tab",
+								tabIndex: state.activeTab === tab ? 0 : -1,
+								"aria-selected": state.activeTab === tab,
+								"aria-controls": panelId,
+								onClick: () => setState({ ...state, activeTab: tab }),
+								onKeyDown: (
+									event: import("react").KeyboardEvent<HTMLButtonElement>,
+								) => {
+									const current = TABS.indexOf(tab);
+									let next = current;
+									if (event.key === "ArrowRight")
+										next = (current + 1) % TABS.length;
+									else if (event.key === "ArrowLeft")
+										next = (current - 1 + TABS.length) % TABS.length;
+									else if (event.key === "Home") next = 0;
+									else if (event.key === "End") next = TABS.length - 1;
+									else return;
+									event.preventDefault();
+									const nextTab = TABS[next];
+									if (!nextTab) return;
+									setState({ ...state, activeTab: nextTab });
+									const tablist =
+										event.currentTarget.closest('[role="tablist"]');
+									tablist
+										?.querySelector<HTMLElement>(`#${tabId(nextTab)}`)
+										?.focus();
+								},
 								style: {
 									padding: "6px 12px",
 									cursor: "pointer",
@@ -292,12 +223,10 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 					),
 				),
 				createElement(
-					"div",
+					"button",
 					{
-						...makeInteractive(() => setState({ ...state, expanded: false }), {
-							role: "button",
-							id: `${id}/close`,
-						}),
+						type: "button",
+						onClick: () => setState({ ...state, expanded: false }),
 						"aria-label": "Close DevTools",
 						style: {
 							cursor: "pointer",
@@ -309,13 +238,12 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 					"✖",
 				),
 			),
-			// Content Area
 			createElement(
 				"div",
 				{
 					role: "tabpanel",
-					id: `${id}/tabpanel`,
-					"aria-labelledby": `${id}/tab/${state.activeTab}`,
+					id: panelId,
+					"aria-labelledby": tabId(state.activeTab),
 					style: {
 						flex: 1,
 						overflow: "hidden",
@@ -323,26 +251,20 @@ export const DevTools = defineWidget<DevToolsState, [], void>({
 						padding: "8px",
 					},
 				},
-				state.activeTab === "Elements" &&
+				createElement(
+					"div",
+					{ style: { overflowY: "auto", height: "100%" } },
 					createElement(
-						"div",
-						{ style: { overflowY: "auto", height: "100%" } },
-						createElement(
-							"pre",
-							{ style: { color: "#51cf66", margin: 0 } },
-							elementsText || "(no widgets rendered)",
-						),
+						"pre",
+						{
+							style: {
+								color: state.activeTab === "Elements" ? "#51cf66" : "#ff6b6b",
+								margin: 0,
+							},
+						},
+						inspectorText,
 					),
-				state.activeTab === "State" &&
-					createElement(
-						"div",
-						{ style: { overflowY: "auto", height: "100%" } },
-						createElement(
-							"pre",
-							{ style: { color: "#ff6b6b", margin: 0 } },
-							stateText || "(no state)",
-						),
-					),
+				),
 			),
 		);
 	},

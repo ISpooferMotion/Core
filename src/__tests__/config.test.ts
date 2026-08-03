@@ -46,7 +46,7 @@ describe("defineConfig", () => {
 	});
 
 	it("throws for a non-boolean showDevTools", () => {
-		// @ts-expect-error -- intentionally invalid at runtime
+		// @ts-expect-error  intentionally invalid at runtime
 		expect(() => defineConfig({ showDevTools: "yes" })).toThrow("showDevTools");
 	});
 });

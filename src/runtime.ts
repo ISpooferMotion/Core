@@ -1,25 +1,103 @@
 import * as errors from "./errors";
 import type { FrameEntry, StorageAdapter } from "./types";
 
-/**
- * Tracks an open scoped widget (e.g., Collapsing, Window).
- * Scopes nest: children are appended to the innermost scope's FrameEntry.
- */
 interface ScopeEntry {
 	id: string;
 	label: string;
 	frameEntry: FrameEntry;
+	previousIdPrefix: string;
 }
 
-/**
- * Object pool for zero-allocation FrameEntry nodes.
- */
+interface MemoCacheEntry {
+	deps: unknown[];
+	subtree: FrameEntry[];
+	widgetIds: string[];
+}
+
+export interface MemoIdentity {
+	cacheKey: string;
+	idSegment: string;
+}
+
+function encodeIdSegment(value: string): string {
+	return value.replaceAll("%", "%25").replaceAll("/", "%2F");
+}
+
+function cloneMapOfArrays(map: Map<string, unknown[]>): Map<string, unknown[]> {
+	return new Map(Array.from(map, ([key, value]) => [key, [...value]]));
+}
+
+function cloneMapOfSets<K, V>(map: Map<K, Set<V>>): Map<K, Set<V>> {
+	return new Map(Array.from(map, ([key, value]) => [key, new Set(value)]));
+}
+
+function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
+	return (
+		left.length === right.length &&
+		left.every((value, index) => value === right[index])
+	);
+}
+
+function mapsOfArraysEqual(
+	left: Map<string, unknown[]>,
+	right: Map<string, unknown[]>,
+): boolean {
+	if (left.size !== right.size) return false;
+	for (const [key, leftValues] of left) {
+		const rightValues = right.get(key);
+		if (!rightValues || !arraysEqual(leftValues, rightValues)) return false;
+	}
+	return true;
+}
+
+function shallowStateEqual(left: unknown, right: unknown): boolean {
+	if (Object.is(left, right)) return true;
+	if (Array.isArray(left) && Array.isArray(right)) {
+		return arraysEqual(left, right);
+	}
+	if (
+		left !== null &&
+		right !== null &&
+		typeof left === "object" &&
+		typeof right === "object" &&
+		Object.getPrototypeOf(left) === Object.prototype &&
+		Object.getPrototypeOf(right) === Object.prototype
+	) {
+		const leftRecord = left as Record<string, unknown>;
+		const rightRecord = right as Record<string, unknown>;
+		const leftKeys = Object.keys(leftRecord);
+		if (leftKeys.length !== Object.keys(rightRecord).length) return false;
+		return leftKeys.every(
+			(key) =>
+				Object.hasOwn(rightRecord, key) &&
+				Object.is(leftRecord[key], rightRecord[key]),
+		);
+	}
+	return false;
+}
+
+function restoreMap<K, V>(target: Map<K, V>, source: Map<K, V>): void {
+	target.clear();
+	for (const [key, value] of source) target.set(key, value);
+}
+
+function restoreSet<T>(target: Set<T>, source: Set<T>): void {
+	target.clear();
+	for (const value of source) target.add(value);
+}
+
+let nextRuntimeInstanceId = 1;
+
 class FramePool {
 	private pool: FrameEntry[] = [];
 	private index = 0;
 
 	reset(): void {
 		this.index = 0;
+	}
+
+	trim(maxRetained: number): void {
+		if (this.pool.length > maxRetained) this.pool.length = maxRetained;
 	}
 
 	acquire(): FrameEntry {
@@ -31,6 +109,7 @@ class FramePool {
 				scoped: false,
 				children: [],
 				defaultState: null,
+				renderState: null,
 				persistent: false,
 				widgetProps: {
 					"data-ism-widget": "",
@@ -40,380 +119,290 @@ class FramePool {
 				renderFn: () => null,
 			} satisfies FrameEntry);
 		}
+
 		const entry = this.pool[this.index++] as FrameEntry;
 		entry.children.length = 0;
+		delete entry.a11yDescription;
 		return entry;
 	}
 }
 
-/**
- * The immediate-mode runtime engine.
- *
- * Manages widget state persistence, the ID stack for scoping,
- * the per-frame widget tree (frame buffer), and scheduling re-renders
- * through a registered React trigger.
- *
- * There is exactly one Runtime instance per application (singleton).
- */
+/** The immediate-mode runtime engine for one createApp root. */
 export class Runtime {
-	/** Optional persistence backend */
-	private storage: StorageAdapter | null;
-
-	/** Widget state persisted across frames, keyed by composite ID */
+	private readonly storage: StorageAdapter | null;
 	private stateStore = new Map<string, unknown>();
-
-	/** Context stack for implicit state down the widget tree */
 	private contextStack = new Map<string, unknown[]>();
-
-	/** Cache for memoBlock subtrees */
-	private memoCache = new Map<
-		string,
-		{ deps: unknown[]; subtree: FrameEntry[] }
-	>();
-
-	/** TTL for graceful memoBlock cache exits (memoKey -> expiry timestamp ms) */
+	private memoCache = new Map<string, MemoCacheEntry>();
+	private memoKeysByWidgetId = new Map<string, Set<string>>();
 	private memoTTL = new Map<string, number>();
-
-	/** memoBlock keys touched during the current frame (for TTL-based GC) */
 	private memoKeysThisFrame = new Set<string>();
-
-	/** ID stack for pushId/popId scoping */
-	private idStack: string[] = [];
-
-	/** Cached string prefix derived from idStack to avoid .join("/") on every widget call */
+	private memoCollisionCounter = new Map<string, number>();
+	private memoCaptureDepth = 0;
+	private idPrefixStack: string[] = [];
 	private idPrefix = "";
-
-	/** Per-frame collision counter: how many times each raw ID has appeared */
 	private collisionCounter = new Map<string, number>();
-
-	/** Raw IDs that have already emitted a duplicate warning this frame */
+	private usedFinalIds = new Set<string>();
 	private duplicateWarned = new Set<string>();
-
-	/** Current frame's root-level entries, partitioned by layer */
 	private frameRoot = new Map<string, FrameEntry[]>();
-
-	/** The stack of active layers. Defaults to ["default"] */
 	private activeLayerStack: string[] = ["default"];
-
-	/** Globally tracked focused widget ID */
 	private focusedId: string | null = null;
-
-	/**
-	 * Composite ids (including hand-registered sub-ids, see
-	 * {@link registerExternalId}) owned by *this* runtime instance.
-	 *
-	 * Previously this bookkeeping lived in a single module-level
-	 * `idOwnerRuntime` map shared by every `Runtime` on the page. Because id
-	 * composition is purely content-based (stack prefix + widget name +
-	 * label) with no per-runtime namespace, two independent `createApp()`
-	 * roots with structurally similar draw functions could produce the same
-	 * composite id, and the shared map meant whichever runtime drew last
-	 * silently stole ownership from the other -- with no warning. Keeping
-	 * this set per-instance means each runtime's own bookkeeping can never be
-	 * corrupted by another runtime; see {@link getRuntimeForId} for how
-	 * lookups across instances are now resolved.
-	 */
 	private ownedIds = new Set<string>();
-
-	/** Object pool to prevent allocating FrameEntry objects every frame */
 	private framePool = new FramePool();
-
-	/** TTL for graceful state exits (id -> expiry timestamp ms) */
 	private stateTTL = new Map<string, number>();
-	private static readonly GC_TTL_MS = 1000; // Keep state alive for 1s after unmounting
-
-	/** Stack of open scoped widgets for end() matching */
+	private static readonly GC_TTL_MS = 1000;
 	private scopeStack: ScopeEntry[] = [];
-
-	/** Whether we're inside a beginFrame/endFrame pass */
 	private drawing = false;
-
-	/** Registered React re-render trigger */
 	private rerenderFn: (() => void) | null = null;
-
-	/** Whether a re-render has been requested but not yet processed */
 	private dirty = false;
-
-	/** Whether an app component is currently mounted */
+	private readonly instanceId = `ism-runtime-${nextRuntimeInstanceId++}`;
+	private lifecycleToken = 0;
 	private appMounted = false;
+	private treeRevision = 0;
+	private stateRevision = 0;
+	private lastTreeFingerprint = "";
 
 	constructor(storage?: StorageAdapter) {
 		this.storage = storage ?? null;
 	}
 
-	// --- App lifecycle ---
-
-	/**
-	 * Register the React re-render trigger. Called by createApp on mount.
-	 * Each Runtime instance supports exactly one registered trigger at a time
-	 * (one per createApp() root). Multiple Runtime instances -- i.e. multiple
-	 * createApp() roots on the same page -- are supported simultaneously and
-	 * are tracked in {@link mountedRuntimes}.
-	 */
 	registerApp(rerenderFn: () => void): void {
+		this.lifecycleToken++;
 		this.appMounted = true;
 		this.rerenderFn = rerenderFn;
+		this.dirty = false;
 		mountedRuntimes.add(this);
 	}
 
-	/**
-	 * Deregister the app and clear all state. Called by createApp on unmount.
-	 */
 	unregisterApp(): void {
 		this.appMounted = false;
 		this.rerenderFn = null;
+		this.dirty = false;
+		mountedRuntimes.delete(this);
+		if (mountedRuntimes.size <= 1) crossRuntimeCollisionWarned.clear();
+
+		const token = ++this.lifecycleToken;
+		queueMicrotask(() => {
+			if (!this.appMounted && this.lifecycleToken === token) this.clearState();
+		});
+	}
+
+	private clearState(): void {
 		this.stateStore.clear();
-		this.idStack = [];
+		this.contextStack.clear();
+		this.memoCache.clear();
+		this.memoKeysByWidgetId.clear();
+		this.memoTTL.clear();
+		this.memoKeysThisFrame.clear();
+		this.memoCollisionCounter.clear();
+		this.idPrefixStack.length = 0;
 		this.idPrefix = "";
 		this.collisionCounter.clear();
+		this.usedFinalIds.clear();
 		this.duplicateWarned.clear();
 		this.frameRoot.clear();
 		this.activeLayerStack = ["default"];
+		this.focusedId = null;
+		this.ownedIds.clear();
 		this.framePool.reset();
 		this.stateTTL.clear();
-		this.memoCache.clear();
-		this.memoTTL.clear();
-		this.memoKeysThisFrame.clear();
-		this.contextStack.clear();
 		this.scopeStack.length = 0;
-		this.focusedId = null;
 		this.drawing = false;
 		this.dirty = false;
-		this.ownedIds.clear();
-		mountedRuntimes.delete(this);
+		this.memoCaptureDepth = 0;
+		this.treeRevision++;
+		this.stateRevision++;
+		this.lastTreeFingerprint = "";
 	}
 
-	/**
-	 * Whether an app is currently mounted.
-	 */
 	isAppMounted(): boolean {
 		return this.appMounted;
 	}
 
-	// --- Frame lifecycle ---
+	getInstanceId(): string {
+		return this.instanceId;
+	}
 
-	/**
-	 * Start a new frame. Clears the frame buffer and per-frame counters.
-	 * Must be paired with endFrame().
-	 */
+	getDomId(kind: string, id: string): string {
+		return `${this.instanceId}-${encodeIdSegment(kind)}-${encodeIdSegment(id)}`;
+	}
+
 	beginFrame(): void {
 		this.drawing = true;
 		this.frameRoot.clear();
 		this.activeLayerStack = ["default"];
 		this.framePool.reset();
 		this.collisionCounter.clear();
+		this.memoCollisionCounter.clear();
+		this.usedFinalIds.clear();
 		this.duplicateWarned.clear();
 		this.scopeStack.length = 0;
-		this.idStack.length = 0;
+		this.idPrefixStack.length = 0;
 		this.idPrefix = "";
 		this.contextStack.clear();
 		this.memoKeysThisFrame.clear();
 		this.dirty = false;
 	}
 
-	/**
-	 * End the current frame. Validates scope closure and garbage-collects
-	 * state for widgets that disappeared since the previous frame.
-	 */
 	endFrame(): void {
-		// Validate all scopes were closed
 		if (this.scopeStack.length > 0) {
-			const unclosed = this.scopeStack.map((s) => s.label);
-			console.error(errors.unclosedScopes(unclosed));
+			console.error(
+				errors.unclosedScopes(this.scopeStack.map((scope) => scope.label)),
+			);
 		}
 
-		// Collect current frame's IDs
 		const currentIds = new Set<string>();
-		for (const entries of this.frameRoot.values()) {
+		for (const entries of this.frameRoot.values())
 			this.collectIds(entries, currentIds);
-		}
 
-		// TTL-based GC: allow graceful state exits (e.g. for AnimatePresence)
 		const now = Date.now();
-		for (const [id, expiry] of this.stateTTL.entries()) {
+		for (const [id, expiry] of this.stateTTL) {
 			if (currentIds.has(id)) {
 				this.stateTTL.set(id, now + Runtime.GC_TTL_MS);
 			} else if (now > expiry) {
 				this.stateStore.delete(id);
+				this.stateRevision++;
 				this.stateTTL.delete(id);
-				if (this.focusedId === id) {
-					this.focusedId = null;
-				}
 				this.ownedIds.delete(id);
+				this.invalidateMemoForWidget(id);
+				if (this.focusedId === id) this.focusedId = null;
 			}
 		}
-
-		// Initialize TTL for new IDs
 		for (const id of currentIds) {
-			if (!this.stateTTL.has(id)) {
+			if (!this.stateTTL.has(id))
 				this.stateTTL.set(id, now + Runtime.GC_TTL_MS);
-			}
 		}
 
-		// TTL-based GC for memoBlock's subtree cache. Without this, memoBlock
-		// calls keyed by a dynamic id (e.g. a list item id inside pushId)
-		// accumulate in memoCache forever once that item is removed --
-		// captureSubtree/setMemo have no other eviction path, so a long-lived
-		// app with a changing list leaks one cache entry (deps + a cloned
-		// FrameEntry subtree) per removed item. Mirrors the stateStore GC above.
-		for (const [key, expiry] of this.memoTTL.entries()) {
+		for (const [key, expiry] of this.memoTTL) {
 			if (this.memoKeysThisFrame.has(key)) {
 				this.memoTTL.set(key, now + Runtime.GC_TTL_MS);
 			} else if (now > expiry) {
-				this.memoCache.delete(key);
-				this.memoTTL.delete(key);
+				this.deleteMemo(key);
 			}
 		}
 		for (const key of this.memoKeysThisFrame) {
-			if (!this.memoTTL.has(key)) {
+			if (!this.memoTTL.has(key))
 				this.memoTTL.set(key, now + Runtime.GC_TTL_MS);
-			}
 		}
 
+		if (this.idPrefixStack.length > 0) {
+			console.error(
+				`[ism] Unbalanced pushId/popId calls: ${this.idPrefixStack.length} segment(s) remain open.`,
+			);
+		}
+		for (const [key, stack] of this.contextStack) {
+			if (stack.length > 0) {
+				console.error(
+					`[ism] Unbalanced context stack for "${key}": ${stack.length} value(s) remain.`,
+				);
+			}
+		}
+		if (this.activeLayerStack.length > 1) {
+			console.error(
+				`[ism] Unbalanced pushLayer/popLayer calls: ${this.activeLayerStack.length - 1} layer(s) remain open.`,
+			);
+		}
+
+		const treeFingerprint = this.computeTreeFingerprint();
+		if (treeFingerprint !== this.lastTreeFingerprint) {
+			this.lastTreeFingerprint = treeFingerprint;
+			this.treeRevision++;
+		}
+
+		this.framePool.trim(Math.max(currentIds.size * 2, 128));
 		this.drawing = false;
 	}
 
-	/**
-	 * Whether we're currently inside a draw pass.
-	 */
 	isDrawing(): boolean {
 		return this.drawing;
 	}
 
-	/**
-	 * Get the current frame buffer (root-level entries) keyed by layer.
-	 */
 	getFrameBuffer(): Map<string, FrameEntry[]> {
 		return this.frameRoot;
 	}
 
-	// --- Widget state ---
-
-	/**
-	 * Look up or initialize persistent state for a widget by ID.
-	 * If no state exists, a deep clone of defaultState is stored and returned.
-	 */
-	getState<S>(id: string, defaultState: S, persistent: boolean = false): S {
+	getState<S>(id: string, defaultState: S, persistent = false): S {
 		if (!this.stateStore.has(id)) {
 			let initialState: S;
 			try {
 				initialState = structuredClone(defaultState);
-			} catch (err) {
+			} catch (error) {
 				throw new Error(
-					errors.defaultStateCloneFailure(id, errors.getErrorMessage(err)),
+					errors.defaultStateCloneFailure(id, errors.getErrorMessage(error)),
 				);
 			}
+
 			if (persistent && this.storage) {
 				const stored = this.storage.get(id);
-				if (stored !== undefined && stored !== null) {
-					initialState = stored as S;
-				} else {
-					this.storage.set(id, initialState);
-				}
+				if (stored !== undefined && stored !== null) initialState = stored as S;
+				else this.storage.set(id, initialState);
 			}
 			this.stateStore.set(id, initialState);
+			this.stateRevision++;
 		}
 		return this.stateStore.get(id) as S;
 	}
 
-	/**
-	 * Update persistent state for a widget by ID.
-	 * Accepts a direct value or an updater function (prev => next).
-	 * Triggers a re-render via markDirty().
-	 */
-	setState(id: string, updater: unknown, persistent: boolean = false): void {
+	setState(id: string, updater: unknown, persistent = false): void {
+		if (!this.stateStore.has(id)) return;
 		const current = this.stateStore.get(id);
 		const next =
 			typeof updater === "function"
-				? (updater as (prev: unknown) => unknown)(current)
+				? (updater as (previous: unknown) => unknown)(current)
 				: updater;
 		this.stateStore.set(id, next);
-
-		if (persistent && this.storage) {
-			this.storage.set(id, next);
-		}
-
+		this.stateRevision++;
+		if (persistent && this.storage) this.storage.set(id, next);
+		this.invalidateMemoForWidget(id);
 		this.markDirty();
 	}
 
-	// --- ID system ---
+	consumeState(
+		id: string,
+		currentState: unknown,
+		consumer: (state: unknown) => unknown,
+		persistent = false,
+	): void {
+		if (!this.stateStore.has(id)) return;
+		const next = consumer(currentState);
+		if (shallowStateEqual(currentState, next)) return;
+		this.stateStore.set(id, next);
+		this.stateRevision++;
+		if (persistent && this.storage) this.storage.set(id, next);
+	}
 
-	/**
-	 * Build a composite ID from the current ID stack, widget name, and label.
-	 *
-	 * ID composition rules:
-	 * - Stack prefix: all pushId values joined with "/"
-	 * - Widget name: always included for type-level disambiguation
-	 * - Label handling:
-	 *   - "Label##suffix" -> full string used as-is (display is "Label")
-	 *   - "Label###stableId" -> only "stableId" used for ID (display is "Label")
-	 *   - "Label" -> used as-is
-	 *   - undefined -> widget name used as fallback
-	 * - Collision: second occurrence of the same raw ID gets "__2" appended (with warning)
-	 */
 	buildId(widgetName: string, label: string | undefined): string {
-		let idPart: string;
+		const rawLabel =
+			label === undefined
+				? widgetName
+				: label.includes("###")
+					? label.slice(label.indexOf("###") + 3)
+					: label;
+		const rawId = `${this.idPrefix}${encodeIdSegment(widgetName)}/${encodeIdSegment(rawLabel)}`;
+		let occurrence = this.collisionCounter.get(rawId) ?? 0;
+		let finalId = occurrence === 0 ? rawId : `${rawId}__${occurrence + 1}`;
 
-		if (label !== undefined) {
-			// ### convention: only text after ### is the ID
-			const tripleHashIdx = label.indexOf("###");
-			if (tripleHashIdx !== -1) {
-				idPart = label.substring(tripleHashIdx + 3);
-			} else {
-				// ## convention (or no hash): full string is the ID
-				idPart = label;
-			}
-		} else {
-			// No label: use widget name as ID component
-			idPart = widgetName;
+		while (this.usedFinalIds.has(finalId)) {
+			occurrence++;
+			finalId = `${rawId}__${occurrence + 1}`;
 		}
 
-		// Compose: stack/WidgetName/idPart
-		const rawId = `${this.idPrefix}${widgetName}/${idPart}`;
-
-		// Collision detection and auto-disambiguation
-		const count = this.collisionCounter.get(rawId) ?? 0;
-		this.collisionCounter.set(rawId, count + 1);
-
-		if (count > 0) {
-			if (!this.duplicateWarned.has(rawId) && label !== undefined) {
-				const displayLabel = extractDisplayLabel(label);
-				console.warn(errors.duplicateId(widgetName, displayLabel));
-				this.duplicateWarned.add(rawId);
-			}
-			const collidedId = `${rawId}__${count + 1}`;
-			this.ownedIds.add(collidedId);
-			return collidedId;
+		this.collisionCounter.set(rawId, occurrence + 1);
+		this.reserveId(finalId);
+		if (
+			finalId !== rawId &&
+			label !== undefined &&
+			!this.duplicateWarned.has(rawId)
+		) {
+			this.duplicateWarned.add(rawId);
+			console.warn(errors.duplicateId(widgetName, extractDisplayLabel(label)));
 		}
-
-		this.ownedIds.add(rawId);
-		return rawId;
+		return finalId;
 	}
 
-	/**
-	 * Register a hand-constructed id (not produced by {@link buildId}) as
-	 * owned by this runtime, so code that looks up ownership by id (e.g.
-	 * `makeInteractive`'s focus/blur routing via {@link getRuntimeForId})
-	 * can resolve it. Intended for widgets that build compound sub-element
-	 * ids of their own (e.g. `${id}/tab/${tab}`) that don't correspond to a
-	 * separate widget instance and so never go through `buildId`.
-	 *
-	 * Idempotent -- safe to call every render.
-	 */
-	registerExternalId(id: string): void {
-		this.ownedIds.add(id);
-	}
-
-	/** Whether this runtime instance currently owns (has registered) `id`. */
 	ownsId(id: string): boolean {
 		return this.ownedIds.has(id);
 	}
 
-	// --- Environment Context Stack ---
-
-	/**
-	 * Push a value onto a specific context stack key.
-	 */
 	pushContext<T>(key: string, value: T): void {
 		let stack = this.contextStack.get(key);
 		if (!stack) {
@@ -423,9 +412,6 @@ export class Runtime {
 		stack.push(value);
 	}
 
-	/**
-	 * Pop the most recent value from a specific context stack key.
-	 */
 	popContext(key: string): void {
 		const stack = this.contextStack.get(key);
 		if (!stack || stack.length === 0) {
@@ -435,30 +421,15 @@ export class Runtime {
 		stack.pop();
 	}
 
-	/**
-	 * Get the current active value for a specific context stack key.
-	 */
 	getContext<T>(key: string): T | undefined {
 		const stack = this.contextStack.get(key);
-		if (!stack || stack.length === 0) {
-			return undefined;
-		}
-		return stack[stack.length - 1] as T;
+		return stack?.[stack.length - 1] as T | undefined;
 	}
 
-	// --- Layers ---
-
-	/**
-	 * Push a layer onto the layer stack. All subsequent root-level widgets
-	 * will be rendered into this layer (useful for modals/tooltips).
-	 */
 	pushLayer(layerName: string): void {
 		this.activeLayerStack.push(layerName);
 	}
 
-	/**
-	 * Pop the most recent layer from the stack.
-	 */
 	popLayer(): void {
 		if (this.activeLayerStack.length <= 1) {
 			console.warn(errors.popDefaultLayer());
@@ -467,94 +438,173 @@ export class Runtime {
 		this.activeLayerStack.pop();
 	}
 
-	/**
-	 * Get the current active layer.
-	 */
 	getActiveLayer(): string {
 		return this.activeLayerStack[this.activeLayerStack.length - 1] ?? "default";
 	}
 
-	// --- Memoization ---
+	buildMemoIdentity(id: string): MemoIdentity {
+		const encoded = encodeIdSegment(id);
+		const base = `${this.idPrefix}__memo__/${encoded}`;
+		const count = (this.memoCollisionCounter.get(base) ?? 0) + 1;
+		this.memoCollisionCounter.set(base, count);
+		const suffix = count === 1 ? "" : `__${count}`;
+		const cacheKey = `${base}${suffix}`;
+		this.memoKeysThisFrame.add(cacheKey);
+		return { cacheKey, idSegment: `${encoded}${suffix}` };
+	}
 
-	getMemo(id: string): { deps: unknown[]; subtree: FrameEntry[] } | undefined {
+	/** @deprecated Use buildMemoIdentity. */
+	buildMemoKey(id: string): string {
+		return this.buildMemoIdentity(id).cacheKey;
+	}
+
+	getMemo(id: string): MemoCacheEntry | undefined {
 		return this.memoCache.get(id);
 	}
 
-	setMemo(id: string, deps: unknown[], subtree: FrameEntry[]): void {
-		this.memoCache.set(id, { deps, subtree });
+	setMemo(id: string, deps: readonly unknown[], subtree: FrameEntry[]): void {
+		this.deleteMemo(id);
+		const widgetIds = this.collectSubtreeIds(subtree);
+		this.memoCache.set(id, { deps: [...deps], subtree, widgetIds });
+		for (const widgetId of widgetIds) {
+			let keys = this.memoKeysByWidgetId.get(widgetId);
+			if (!keys) {
+				keys = new Set<string>();
+				this.memoKeysByWidgetId.set(widgetId, keys);
+			}
+			keys.add(id);
+		}
 	}
 
-	/**
-	 * Build a stable cache key for a memoBlock.
-	 *
-	 * Uses the current ID stack as a namespace prefix but bypasses
-	 * `buildId` and the collision counter entirely. Memo blocks are
-	 * not widgets and must not participate in duplicate-ID detection
-	 * or conflict with a user widget named "MemoBlock".
-	 */
-	buildMemoKey(id: string): string {
-		const key = `${this.idPrefix}__memo__/${id}`;
-		this.memoKeysThisFrame.add(key);
-		return key;
+	private deleteMemo(id: string): void {
+		const existing = this.memoCache.get(id);
+		if (existing) {
+			for (const widgetId of existing.widgetIds) {
+				const keys = this.memoKeysByWidgetId.get(widgetId);
+				keys?.delete(id);
+				if (keys?.size === 0) this.memoKeysByWidgetId.delete(widgetId);
+			}
+		}
+		this.memoCache.delete(id);
+		this.memoTTL.delete(id);
 	}
 
-	/**
-	 * Deep clone a subtree of FrameEntries so it is detached from the FramePool
-	 */
-	private cloneSubtree(entries: FrameEntry[]): FrameEntry[] {
-		return entries.map((entry) => ({
-			...entry,
-			args: [...entry.args],
-			widgetProps: { ...entry.widgetProps },
-			children: this.cloneSubtree(entry.children),
-		}));
+	private invalidateMemoForWidget(widgetId: string): void {
+		const keys = this.memoKeysByWidgetId.get(widgetId);
+		if (!keys) return;
+		for (const key of [...keys]) this.deleteMemo(key);
+	}
+
+	isCapturingMemo(): boolean {
+		return this.memoCaptureDepth > 0;
 	}
 
 	captureSubtree(memoId: string, drawClosure: () => void): FrameEntry[] {
-		const scopeDepthBefore = this.scopeStack.length;
-		const parentChildren = this.getCurrentParentChildren();
-		const startIndex = parentChildren.length;
+		const scopeSnapshot = [...this.scopeStack];
+		const prefixStackSnapshot = [...this.idPrefixStack];
+		const prefixSnapshot = this.idPrefix;
+		const contextSnapshot = cloneMapOfArrays(this.contextStack);
+		const layerSnapshot = [...this.activeLayerStack];
+		const frameRootSnapshot = new Map(this.frameRoot);
+		const frameLengths = this.snapshotFrameLengths();
+		const collisionSnapshot = new Map(this.collisionCounter);
+		const usedSnapshot = new Set(this.usedFinalIds);
+		const warnedSnapshot = new Set(this.duplicateWarned);
+		const ownedSnapshot = new Set(this.ownedIds);
+		const stateSnapshot = new Map(this.stateStore);
+		const stateTTLSnapshot = new Map(this.stateTTL);
+		const stateRevisionSnapshot = this.stateRevision;
+		const memoCacheSnapshot = new Map(this.memoCache);
+		const memoKeysByWidgetIdSnapshot = cloneMapOfSets(this.memoKeysByWidgetId);
+		const memoTTLSnapshot = new Map(this.memoTTL);
+		const memoKeysThisFrameSnapshot = new Set(this.memoKeysThisFrame);
+		const dirtySnapshot = this.dirty;
+		const detached: FrameEntry = {
+			id: `__memo_capture__/${encodeIdSegment(memoId)}`,
+			widgetName: "MemoCapture",
+			args: [],
+			scoped: true,
+			children: [],
+			defaultState: null,
+			renderState: null,
+			persistent: false,
+			widgetProps: {
+				"data-ism-widget": "MemoCapture",
+				"data-ism-id": "",
+				className: "",
+			},
+			renderFn: () => null,
+		};
+		const sentinel: ScopeEntry = {
+			id: detached.id,
+			label: memoId,
+			frameEntry: detached,
+			previousIdPrefix: this.idPrefix,
+		};
 
-		drawClosure();
+		this.scopeStack.push(sentinel);
+		this.memoCaptureDepth++;
+		let succeeded = false;
+		try {
+			drawClosure();
+			const scopeBalanced =
+				this.scopeStack.length === scopeSnapshot.length + 1 &&
+				this.scopeStack[this.scopeStack.length - 1] === sentinel;
+			const otherStacksBalanced =
+				this.idPrefix === prefixSnapshot &&
+				arraysEqual(this.idPrefixStack, prefixStackSnapshot) &&
+				mapsOfArraysEqual(this.contextStack, contextSnapshot) &&
+				arraysEqual(this.activeLayerStack, layerSnapshot);
 
-		if (this.scopeStack.length !== scopeDepthBefore) {
-			console.error(errors.memoBlockUnbalancedScope(memoId));
+			if (!scopeBalanced || !otherStacksBalanced) {
+				throw new Error(errors.memoBlockUnbalancedState(memoId));
+			}
+
+			succeeded = true;
+			return this.cloneSubtree(detached.children);
+		} finally {
+			this.memoCaptureDepth--;
+			this.restoreFrameSnapshot(frameRootSnapshot, frameLengths);
+			this.scopeStack = [...scopeSnapshot];
+			this.idPrefixStack = [...prefixStackSnapshot];
+			this.idPrefix = prefixSnapshot;
+			restoreMap(this.contextStack, contextSnapshot);
+			this.activeLayerStack = [...layerSnapshot];
+
+			if (!succeeded) {
+				restoreMap(this.collisionCounter, collisionSnapshot);
+				restoreSet(this.usedFinalIds, usedSnapshot);
+				restoreSet(this.duplicateWarned, warnedSnapshot);
+				restoreSet(this.ownedIds, ownedSnapshot);
+				restoreMap(this.stateStore, stateSnapshot);
+				restoreMap(this.stateTTL, stateTTLSnapshot);
+				this.stateRevision = stateRevisionSnapshot;
+				restoreMap(this.memoCache, memoCacheSnapshot);
+				restoreMap(this.memoKeysByWidgetId, memoKeysByWidgetIdSnapshot);
+				restoreMap(this.memoTTL, memoTTLSnapshot);
+				restoreSet(this.memoKeysThisFrame, memoKeysThisFrameSnapshot);
+				this.dirty = dirtySnapshot;
+			}
 		}
-
-		// Re-fetch: if the closure left an extra scope open, parentChildren
-		// (captured before drawClosure ran) is no longer the array new entries
-		// were actually pushed into. This can't fully recover a correct
-		// capture, but it avoids silently slicing the wrong array.
-		const currentParentChildren = this.getCurrentParentChildren();
-		const captured =
-			currentParentChildren === parentChildren
-				? parentChildren.slice(startIndex, currentParentChildren.length)
-				: [];
-
-		return this.cloneSubtree(captured);
 	}
 
-	/**
-	 * Push a previously-captured, cloned subtree into the current frame.
-	 *
-	 * These entries are plain (non-pooled) objects created once by
-	 * {@link captureSubtree} and never mutated afterward by anything in the
-	 * runtime (render/consume only read FrameEntry fields), so they're safe
-	 * to reuse by reference across every frame that hits the memo cache --
-	 * no extra clone needed here.
-	 */
-	pushCachedSubtree(subtree: FrameEntry[]): void {
-		const parentChildren = this.getCurrentParentChildren();
-		parentChildren.push(...subtree);
+	pushCachedSubtree(subtree: FrameEntry[]): boolean {
+		const ids = this.collectSubtreeIds(subtree);
+		if (ids.some((id) => this.usedFinalIds.has(id))) return false;
+		for (const id of ids) this.reserveId(id);
+		this.refreshRenderState(subtree);
+		this.getCurrentParentChildren().push(...subtree);
+		return true;
 	}
 
-	// --- Focus Management ---
+	appendCapturedSubtree(subtree: FrameEntry[]): void {
+		this.getCurrentParentChildren().push(...subtree);
+	}
 
 	setFocus(id: string | null): void {
-		if (this.focusedId !== id) {
-			this.focusedId = id;
-			this.markDirty();
-		}
+		if (this.focusedId === id) return;
+		this.focusedId = id;
+		this.markDirty();
 	}
 
 	isFocused(id: string): boolean {
@@ -565,8 +615,6 @@ export class Runtime {
 		return this.focusedId;
 	}
 
-	// --- DevTools Inspector ---
-
 	getTree(): Map<string, FrameEntry[]> {
 		return this.frameRoot;
 	}
@@ -575,115 +623,110 @@ export class Runtime {
 		return this.stateStore;
 	}
 
-	// --- Scoping ---
-
-	/**
-	 * Push a scope onto the scope stack. Called by scoped widgets.
-	 * Subsequent widget registrations become children of this scope's FrameEntry.
-	 * Also pushes the scope's ID onto the ID stack for nested ID composition.
-	 */
-	pushScope(id: string, label: string, frameEntry: FrameEntry): void {
-		this.scopeStack.push({ id, label, frameEntry });
-		this.idStack.push(id);
+	getInspectionRevision(kind: "tree" | "state"): number {
+		return kind === "tree" ? this.treeRevision : this.stateRevision;
 	}
 
-	/**
-	 * Pop the innermost scope. Called by end().
-	 * Pops both the scope stack and the ID stack.
-	 */
+	pushScope(id: string, label: string, frameEntry: FrameEntry): void {
+		this.scopeStack.push({
+			id,
+			label,
+			frameEntry,
+			previousIdPrefix: this.idPrefix,
+		});
+		this.idPrefix = `${id}/`;
+	}
+
 	popScope(): void {
 		if (this.scopeStack.length === 0) {
 			console.error(errors.endWithoutScope());
 			return;
 		}
-		this.scopeStack.pop();
-		this.idStack.pop();
+		const scope = this.scopeStack.pop();
+		this.idPrefix = scope?.previousIdPrefix ?? "";
 	}
 
-	/**
-	 * Acquire a pooled FrameEntry for zero-allocation rendering.
-	 */
 	acquireFrameEntry(): FrameEntry {
 		return this.framePool.acquire();
 	}
 
-	/**
-	 * Get the children array of the innermost open scope.
-	 * If no scopes are open, returns the root frame buffer for the active layer.
-	 */
 	getCurrentParentChildren(): FrameEntry[] {
-		if (this.scopeStack.length === 0) {
-			const activeLayer = this.getActiveLayer();
-			let entries = this.frameRoot.get(activeLayer);
-			if (!entries) {
-				entries = [];
-				this.frameRoot.set(activeLayer, entries);
-			}
-			return entries;
+		const scope = this.scopeStack[this.scopeStack.length - 1];
+		if (scope) return scope.frameEntry.children;
+		const layer = this.getActiveLayer();
+		let entries = this.frameRoot.get(layer);
+		if (!entries) {
+			entries = [];
+			this.frameRoot.set(layer, entries);
 		}
-		const topScope = this.scopeStack[this.scopeStack.length - 1];
-		return topScope ? topScope.frameEntry.children : [];
+		return entries;
 	}
 
-	// --- ID stack (pushId / popId) ---
-
-	/**
-	 * Push an ID segment onto the stack.
-	 * All widgets registered while this segment is on the stack
-	 * will have it as a prefix in their composite IDs.
-	 */
 	pushIdSegment(id: string): void {
-		this.idStack.push(id);
-		this.idPrefix = `${this.idStack.join("/")}/`;
+		this.idPrefixStack.push(this.idPrefix);
+		this.idPrefix = `${this.idPrefix}${encodeIdSegment(id)}/`;
 	}
 
-	/**
-	 * Pop the most recent ID segment from the stack.
-	 */
 	popIdSegment(): void {
-		if (this.idStack.length === 0) {
+		if (this.idPrefixStack.length === 0) {
 			console.warn(errors.popIdEmpty());
 			return;
 		}
-		this.idStack.pop();
-		this.idPrefix = this.idStack.length > 0 ? `${this.idStack.join("/")}/` : "";
+		this.idPrefix = this.idPrefixStack.pop() ?? "";
 	}
 
-	// --- Scheduling ---
-
-	/**
-	 * Signal that the UI needs a re-render.
-	 * Calls the registered React trigger. No-ops if already dirty.
-	 */
 	markDirty(): void {
 		if (this.dirty) return;
 		this.dirty = true;
-		if (this.rerenderFn) {
-			const trigger = this.rerenderFn;
-			// Always defer to a microtask. Calling a React dispatch
-			// synchronously during render or a useEffect flush causes
-			// "Too many re-renders". The microtask runs after React
-			// finishes its current work, which is always safe.
-			Promise.resolve().then(() => {
-				if (this.rerenderFn) trigger();
-			});
-		}
+		if (!this.rerenderFn) return;
+		const trigger = this.rerenderFn;
+		const lifecycleToken = this.lifecycleToken;
+		queueMicrotask(() => {
+			if (
+				this.rerenderFn === trigger &&
+				this.lifecycleToken === lifecycleToken &&
+				this.dirty
+			) {
+				trigger();
+			}
+		});
 	}
 
-	// --- Transient state consumption ---
+	private computeTreeFingerprint(): string {
+		let firstHash = 0x811c9dc5;
+		let secondHash = 0x9e3779b9;
+		let nodeCount = 0;
+		const mix = (value: string) => {
+			for (let index = 0; index < value.length; index++) {
+				const code = value.charCodeAt(index);
+				firstHash = Math.imul(firstHash ^ code, 0x01000193);
+				secondHash = Math.imul(secondHash ^ code, 0x85ebca6b);
+			}
+		};
+		const visit = (entries: FrameEntry[]) => {
+			mix("[");
+			for (const entry of entries) {
+				nodeCount++;
+				mix(entry.id);
+				visit(entry.children);
+			}
+			mix("]");
+		};
 
-	/**
-	 * Walk the current frame buffer and call consumeStateFn on each widget
-	 * that defines one. This resets one-shot event flags (e.g., "clicked").
-	 * Called by the React bridge after DOM commit (in useEffect).
-	 */
-	consumeTransientState(): void {
-		for (const entries of this.frameRoot.values()) {
-			this.consumeEntries(entries);
+		for (const [layer, entries] of this.frameRoot) {
+			mix("<");
+			mix(layer);
+			visit(entries);
+			mix(">");
 		}
+
+		return `${nodeCount}:${firstHash >>> 0}:${secondHash >>> 0}`;
 	}
 
-	// --- Internals ---
+	private reserveId(id: string): void {
+		this.usedFinalIds.add(id);
+		this.ownedIds.add(id);
+	}
 
 	private collectIds(entries: FrameEntry[], ids: Set<string>): void {
 		for (const entry of entries) {
@@ -692,134 +735,122 @@ export class Runtime {
 		}
 	}
 
-	private consumeEntries(entries: FrameEntry[]): void {
-		for (const entry of entries) {
-			if (entry.consumeStateFn) {
-				const currentState = this.stateStore.get(entry.id);
-				if (currentState !== undefined) {
-					const nextState = entry.consumeStateFn(currentState);
-					this.stateStore.set(entry.id, nextState);
-					// setState() writes through to storage for persistent widgets;
-					// this automatic per-frame reset must do the same, or a
-					// persistent widget's saved value silently drifts from what's
-					// actually in memory every time its consumeState fires.
-					if (entry.persistent && this.storage) {
-						this.storage.set(entry.id, nextState);
-					}
-				}
+	private collectSubtreeIds(entries: FrameEntry[]): string[] {
+		const ids: string[] = [];
+		const visit = (nodes: FrameEntry[]) => {
+			for (const node of nodes) {
+				ids.push(node.id);
+				visit(node.children);
 			}
-			this.consumeEntries(entry.children);
+		};
+		visit(entries);
+		return ids;
+	}
+
+	private refreshRenderState(entries: FrameEntry[]): void {
+		for (const entry of entries) {
+			if (this.stateStore.has(entry.id))
+				entry.renderState = this.stateStore.get(entry.id);
+			this.refreshRenderState(entry.children);
 		}
+	}
+
+	private cloneSubtree(entries: FrameEntry[]): FrameEntry[] {
+		return entries.map((entry) => ({
+			...entry,
+			args: [...entry.args],
+			widgetProps: { ...entry.widgetProps },
+			children: this.cloneSubtree(entry.children),
+		}));
+	}
+
+	private snapshotFrameLengths(): Map<FrameEntry[], number> {
+		const snapshot = new Map<FrameEntry[], number>();
+		const visit = (entries: FrameEntry[]) => {
+			snapshot.set(entries, entries.length);
+			for (const entry of entries) visit(entry.children);
+		};
+		for (const entries of this.frameRoot.values()) visit(entries);
+		return snapshot;
+	}
+
+	private restoreFrameSnapshot(
+		rootSnapshot: Map<string, FrameEntry[]>,
+		lengthSnapshot: Map<FrameEntry[], number>,
+	): void {
+		for (const [entries, length] of lengthSnapshot) entries.length = length;
+		restoreMap(this.frameRoot, rootSnapshot);
 	}
 }
 
-/**
- * Extract the display label from a raw label string.
- * Strips ## and ### suffixes for display purposes.
- *
- * Examples:
- * - "Delete##item_3" -> "Delete"
- * - "Score###player_hp" -> "Score"
- * - "Hello world" -> "Hello world"
- */
 export function extractDisplayLabel(label: string): string {
-	const tripleHashIdx = label.indexOf("###");
-	if (tripleHashIdx !== -1) {
-		return label.substring(0, tripleHashIdx);
-	}
-	const doubleHashIdx = label.indexOf("##");
-	if (doubleHashIdx !== -1) {
-		return label.substring(0, doubleHashIdx);
-	}
-	return label;
+	const tripleHashIndex = label.indexOf("###");
+	if (tripleHashIndex !== -1) return label.slice(0, tripleHashIndex);
+	const doubleHashIndex = label.indexOf("##");
+	return doubleHashIndex === -1 ? label : label.slice(0, doubleHashIndex);
 }
 
 let activeRuntime: Runtime | null = null;
-/**
- * Global set of all mounted runtimes on the page.
- * @since 2.0.0
- */
 export const mountedRuntimes = new Set<Runtime>();
 
-/** Ids for which a cross-runtime collision warning has already been logged. */
+const MAX_CROSS_RUNTIME_WARNINGS = 256;
 const crossRuntimeCollisionWarned = new Set<string>();
 
-/**
- * Look up which Runtime instance owns a given composite widget id, if any.
- * Returns undefined if the id is unknown to every mounted runtime, or has
- * been garbage-collected.
- *
- * Used by code that needs to act on "the widget with this id" (e.g. focus
- * management) without broadcasting to every mounted runtime on the page,
- * which would be both wasteful and incorrect if two separate apps ever
- * happen to produce the same composite id.
- *
- * Ownership is tracked per-runtime (see `Runtime#ownedIds`), not in a single
- * shared map, so one runtime can never silently overwrite another's
- * ownership record. Because id composition is purely content-based (with no
- * per-runtime namespace), it *is* still possible -- if unlikely -- for two
- * independent `createApp()` roots to legitimately produce the same
- * composite id. In that rare case this function logs a one-time warning
- * (rather than silently picking a "winner") and returns the first match, so
- * routing degrades explicitly instead of failing silently.
- *
- * @internal
- */
+function rememberCrossRuntimeWarning(id: string): boolean {
+	if (crossRuntimeCollisionWarned.has(id)) return false;
+	if (crossRuntimeCollisionWarned.size >= MAX_CROSS_RUNTIME_WARNINGS) {
+		const oldest = crossRuntimeCollisionWarned.values().next().value as
+			| string
+			| undefined;
+		if (oldest !== undefined) crossRuntimeCollisionWarned.delete(oldest);
+	}
+	crossRuntimeCollisionWarned.add(id);
+	return true;
+}
+
 export function getRuntimeForId(id: string): Runtime | undefined {
 	let match: Runtime | undefined;
 	for (const runtime of mountedRuntimes) {
-		if (runtime.ownsId(id)) {
-			if (match === undefined) {
-				match = runtime;
-			} else {
-				if (!crossRuntimeCollisionWarned.has(id)) {
-					crossRuntimeCollisionWarned.add(id);
-					console.warn(
-						`[ism] Multiple mounted apps produced the same widget id ('${id}'). ` +
-							"Ids are only guaranteed unique within a single createApp() root -- " +
-							"routing (e.g. focus tracking) for this id is ambiguous and will " +
-							"resolve to whichever app happened to be checked first.",
-					);
-				}
-				break;
-			}
+		if (!runtime.ownsId(id)) continue;
+		if (!match) {
+			match = runtime;
+			continue;
 		}
+		if (rememberCrossRuntimeWarning(id)) {
+			console.warn(
+				`[ism] Multiple mounted apps produced the same widget id ('${id}'). ` +
+					"Ids are unique within one createApp root, but routing for this id across roots is ambiguous.",
+			);
+		}
+		break;
 	}
+	if (!match) crossRuntimeCollisionWarned.delete(id);
 	return match;
 }
 
-// Expose devtools hook
+export function getRuntimeByInstanceId(
+	instanceId: string,
+): Runtime | undefined {
+	for (const runtime of mountedRuntimes) {
+		if (runtime.getInstanceId() === instanceId) return runtime;
+	}
+	return undefined;
+}
+
 if (typeof window !== "undefined") {
 	const win = window as unknown as Record<string, unknown>;
-	const existing = (
+	const existing =
 		typeof win.__ISM_DEVTOOLS__ === "object" && win.__ISM_DEVTOOLS__ !== null
-			? win.__ISM_DEVTOOLS__
-			: {}
-	) as Record<string, unknown>;
-	win.__ISM_DEVTOOLS__ = {
-		...existing,
-		getRuntimes: () => mountedRuntimes,
-	};
+			? (win.__ISM_DEVTOOLS__ as Record<string, unknown>)
+			: {};
+	win.__ISM_DEVTOOLS__ = { ...existing, getRuntimes: () => mountedRuntimes };
 }
 
 export function getActiveRuntime(): Runtime {
-	if (!activeRuntime) {
-		throw new Error(errors.noActiveRuntime());
-	}
+	if (!activeRuntime) throw new Error(errors.noActiveRuntime());
 	return activeRuntime;
 }
 
-/**
- * Like {@link getActiveRuntime}, but returns `null` instead of throwing
- * when no runtime is currently active (e.g. outside any draw pass).
- *
- * Used by API functions that have a legitimate reason to be called outside
- * a draw pass -- from a DOM event handler or an async callback -- and need
- * to fall back to some other strategy (routing by id ownership, or
- * broadcasting to every mounted runtime) instead of failing outright.
- *
- * @internal
- */
 export function getActiveRuntimeOrNull(): Runtime | null {
 	return activeRuntime;
 }
@@ -828,22 +859,12 @@ export function setActiveRuntime(runtime: Runtime | null): void {
 	activeRuntime = runtime;
 }
 
-/**
- * Execute `fn` with `runtime` as the active context, then restore
- * the previous active runtime.
- *
- * This is safe for nested calls (e.g., memoBlock's captureSubtree
- * invoking widget code): the previous runtime is always restored,
- * even if `fn` throws.
- *
- * @internal. Used by createApp only.
- */
 export function withRuntime<T>(runtime: Runtime, fn: () => T): T {
-	const prev = activeRuntime;
+	const previous = activeRuntime;
 	activeRuntime = runtime;
 	try {
 		return fn();
 	} finally {
-		activeRuntime = prev;
+		activeRuntime = previous;
 	}
 }
