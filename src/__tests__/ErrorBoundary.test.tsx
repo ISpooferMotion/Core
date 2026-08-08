@@ -144,6 +144,23 @@ describe("ErrorFallback", () => {
 		);
 	});
 
+	it("keeps long error content accessible with viewport-bounded scrolling", () => {
+		const root = createRoot(container);
+		act(() => {
+			root.render(
+				createElement(ErrorFallback, {
+					title: "Long error",
+					error: new Error("x".repeat(10_000)),
+				}),
+			);
+		});
+
+		const alertEl = container.querySelector<HTMLElement>('[role="alert"]');
+		expect(alertEl?.style.maxHeight).toBe("calc(100vh - 32px)");
+		expect(alertEl?.style.overflowY).toBe("auto");
+		expect(alertEl?.style.overflowX).toBe("hidden");
+	});
+
 	it("accepts a string error as well as an Error instance", () => {
 		const root = createRoot(container);
 		act(() => {

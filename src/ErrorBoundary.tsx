@@ -48,7 +48,11 @@ const fallbackStyles = {
 		margin: "16px",
 		boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
 		maxWidth: "100%",
-		overflow: "hidden",
+		boxSizing: "border-box",
+		maxHeight: "calc(100vh - 32px)",
+		overflowX: "hidden",
+		overflowY: "auto",
+		overscrollBehavior: "contain",
 	},
 	header: {
 		display: "flex",
