@@ -7,7 +7,9 @@ import {
 } from "./inspectorSerializer";
 import type { Runtime } from "./runtime";
 
-installDevToolsProtocol();
+if (typeof window !== "undefined") {
+	installDevToolsProtocol();
+}
 
 type Tab = "Elements" | "State";
 const TABS: readonly Tab[] = ["Elements", "State"];
