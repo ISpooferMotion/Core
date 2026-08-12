@@ -14,11 +14,7 @@
 		"notDocumented": false
 	},
 	"treatWarningsAsErrors": true,
-	"intentionallyNotExported": [
-		"State",
-		"DevToolsOverlayProps",
-		"FrameEntry"
-	],
+	"intentionallyNotExported": ["State", "DevToolsOverlayProps", "FrameEntry"],
 	"externalSymbolLinkMappings": {
 		"@types/react": {
 			"React.Component.render": "#",
