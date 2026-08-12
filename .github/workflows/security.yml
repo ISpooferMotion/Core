@@ -23,7 +23,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # This action requires the repository's Dependency graph feature, which
+      # is not enabled for every fork or organization. Keep the optional
+      # advisory from blocking the rest of the security workflow in that case.
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        continue-on-error: true
         with:
           fail-on-severity: moderate
 

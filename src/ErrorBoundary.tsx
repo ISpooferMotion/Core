@@ -242,7 +242,7 @@ export function ErrorFallback({
 							: createElement(
 									"li",
 									null,
-									"Check for exceptions, invalid state, or undefined values in the draw function.",
+									"Check the draw loop for exceptions, invalid state, or undefined values.",
 								),
 						createElement(
 							"li",

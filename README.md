@@ -221,7 +221,7 @@ createElement(
 );
 ```
 
-Do not spread `makeInteractive` onto native `button`, `input`, `select`, or `textarea` elements. See [docs/accessibility.md](./docs/accessibility.md) for keyboard, focus, ARIA, descriptions, layers, and error-fallback guidance.
+Do not spread `makeInteractive` onto native `button`, `input`, `select`, or `textarea` elements.
 
 ## Memoization
 
@@ -336,7 +336,7 @@ Use `--force` to replace an existing file. The runtime does not automatically lo
 | Tauri | Designed for Tauri-hosted React apps; no Tauri API/IPC dependency |
 | Operating systems in CI | Ubuntu and Windows |
 
-The package intentionally does not claim compatibility with untested future React majors. See [docs/support.md](./docs/support.md) for policy details.
+The package intentionally does not claim compatibility with untested future React majors.
 
 ## Development
 

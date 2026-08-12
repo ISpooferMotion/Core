@@ -39,8 +39,6 @@
  * Keep irreversible external side effects out of the draw pass. Runtime-owned
  * speculative state is committed only after React commits the frame.
  *
- * Public API stability is documented in `STABILITY.md`.
- *
  * @since 1.0.0
  */
 

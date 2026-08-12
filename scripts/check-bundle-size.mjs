@@ -22,15 +22,13 @@ async function read(path) {
 
 function findStaticImports(source) {
 	const imports = new Set();
-	const patterns = [
-		/(?:import|export)\s+(?:[^"'()]*?\s+from\s*)?["'](\.[^"']+)["']/g,
-		/import\s*["'](\.[^"']+)["']/g,
-	];
-	for (const pattern of patterns) {
-		for (const match of source.matchAll(pattern)) {
-			const specifier = match[1];
-			if (specifier) imports.add(specifier);
-		}
+	// Only recognize actual ESM declarations. Searching every occurrence of
+	// `import` also matches documentation strings in bundled CLI output.
+	const pattern =
+		/(?:^|\n)\s*(?:import|export)\s+(?:(?:[^"'`]*?)\s+from\s+)?["'](\.[^"']+)["'];?/g;
+	for (const match of source.matchAll(pattern)) {
+		const specifier = match[1];
+		if (specifier) imports.add(specifier);
 	}
 	return imports;
 }

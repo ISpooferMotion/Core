@@ -1,27 +1,9 @@
-import { access, readdir, readFile } from "node:fs/promises";
-import { dirname, extname, relative, resolve } from "node:path";
+import { access, readFile } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const roots = [
-	"README.md",
-	"CHANGELOG.md",
-	"CONTRIBUTING.md",
-	"STABILITY.md",
-	"MIGRATION.md",
-	"SECURITY.md",
-];
-
-async function collectMarkdown(directory) {
-	const files = [];
-	for (const entry of await readdir(directory, { withFileTypes: true })) {
-		if (entry.name === "api") continue;
-		const path = resolve(directory, entry.name);
-		if (entry.isDirectory()) files.push(...(await collectMarkdown(path)));
-		else if (entry.isFile() && extname(entry.name) === ".md") files.push(path);
-	}
-	return files;
-}
+const roots = ["README.md", "CHANGELOG.md", "CONTRIBUTING.md"];
 
 function stripFencedCode(markdown) {
 	return markdown.replace(/```[\s\S]*?```/g, "");
@@ -42,10 +24,7 @@ function localTarget(rawTarget) {
 	return decodeURIComponent(pathPart);
 }
 
-const markdownFiles = [
-	...roots.map((path) => resolve(root, path)),
-	...(await collectMarkdown(resolve(root, "docs"))),
-];
+const markdownFiles = roots.map((path) => resolve(root, path));
 
 const failures = [];
 

@@ -133,7 +133,9 @@ try {
 		target: "node22",
 		logLevel: "silent",
 	});
-	const { results } = await import(`${pathToFileURL(output).href}?t=${Date.now()}`);
+	const { results } = await import(
+		`${pathToFileURL(output).href}?t=${Date.now()}`
+	);
 	console.log(JSON.stringify(results, null, 2));
 
 	const frame1000 = results.frames[1000];
@@ -144,7 +146,9 @@ try {
 
 	const failures = [];
 	if (largest > budgets.largestFrameMaxMs) {
-		failures.push(`largest frame ${largest.toFixed(2)}ms > ${budgets.largestFrameMaxMs}ms`);
+		failures.push(
+			`largest frame ${largest.toFixed(2)}ms > ${budgets.largestFrameMaxMs}ms`,
+		);
 	}
 	if (slowdown > budgets.maxPerWidgetSlowdownFrom1000To10000) {
 		failures.push(
@@ -152,7 +156,9 @@ try {
 		);
 	}
 	if (results.gc10000Ms > budgets.gc10000MaxMs) {
-		failures.push(`10k GC ${results.gc10000Ms.toFixed(2)}ms > ${budgets.gc10000MaxMs}ms`);
+		failures.push(
+			`10k GC ${results.gc10000Ms.toFixed(2)}ms > ${budgets.gc10000MaxMs}ms`,
+		);
 	}
 	if (results.memoHit1000Ms > budgets.memoHit1000MaxMs) {
 		failures.push(
@@ -160,7 +166,9 @@ try {
 		);
 	}
 	if (failures.length > 0) {
-		console.error(`Runtime performance budget failed:\n- ${failures.join("\n- ")}`);
+		console.error(
+			`Runtime performance budget failed:\n- ${failures.join("\n- ")}`,
+		);
 		process.exit(1);
 	}
 } finally {

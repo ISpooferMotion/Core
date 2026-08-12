@@ -23,12 +23,20 @@ describe("bounded DevTools serializer", () => {
 		expect(serialized).toContain("Uint8Array");
 	});
 
+	it("serializes valid and invalid dates without relying on Date JSON hooks", () => {
+		expect(
+			serializeInspectorState(new Date("2026-01-02T03:04:05.000Z")),
+		).toContain("2026-01-02T03:04:05.000Z");
+		expect(serializeInspectorState(new Date("not a date"))).toContain(
+			"Invalid Date",
+		);
+	});
+
 	it("enforces depth, node, array, object-key, and string budgets", () => {
 		const serialized = serializeInspectorState(
 			{
 				deep: { a: { b: { c: true } } },
 				array: [1, 2, 3, 4],
-				long: "x".repeat(100),
 				object: { a: 1, b: 2, c: 3 },
 			},
 			{
@@ -40,7 +48,9 @@ describe("bounded DevTools serializer", () => {
 			},
 		);
 		expect(serialized).toContain("Truncated");
-		expect(serialized).toContain("chars truncated");
+		expect(
+			serializeInspectorState("x".repeat(100), { maxStringLength: 10 }),
+		).toContain("chars truncated");
 	});
 
 	it("contains hostile property failures instead of throwing", () => {

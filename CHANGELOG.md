@@ -93,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Error fallback accessibility**: `ErrorFallback` now announces itself to assistive technology (`role="alert"`) and marks its decorative icon `aria-hidden`; its inline style objects are now hoisted constants instead of being reallocated on every render.
 - **CLI Windows compatibility**: the entry-point check in `cli.ts` no longer breaks on Windows paths containing spaces or backslashes (now uses `pathToFileURL` for a normalized comparison instead of a raw string comparison against `import.meta.url`); also removed the unused `existsSync` dependency from `CliDeps` (the atomic `"wx"` write flag already handles the exists-check).
 - Corrected README language overstating `createApp`'s capabilities (it does not perform React concurrent-mode initialization or IPC injection on your behalf) and fixed the README's flagship widget example, which was missing the required `getReturnValue` field and didn't demonstrate `widgetProps`.
-- Reconciled the "stable since v1.0.0" stability claim (in both `STABILITY.md` and `index.ts`'s package doc comment) with the `DevConsole` removal documented under `3.2.0` below -- both now correctly scope the guarantee as effective from `3.2.0` onwards.
+- Reconciled the "stable since v1.0.0" stability claim with the `DevConsole` removal documented under `3.2.0` below; the guarantee is now correctly scoped as effective from `3.2.0` onwards.
 - `WidgetProps.role`/`WidgetA11y.role` narrowed from `string` to React's `AriaRole` union, and `makeInteractive`'s `onKeyDown` handler is now typed against React's synthetic `KeyboardEvent` instead of the DOM's -- both are type-accuracy fixes, not behavior changes (see note below).
 
 ### Changed
@@ -114,7 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Configuration CLI & JSON Schema**: Introduced a dedicated configuration system via `IsmConfig` and `defineConfig`. Consumers can now manage app settings via `ism.config.json`, which can be bootstrapped instantly using the newly added CLI (`npx ism-core init`).
 - **Enhanced ErrorBoundary UI**: Completely redesigned the internal error catch blocks (both React's `ISMCoreErrorBoundary` and the internal draw pass `drawError`). The new `<ErrorFallback>` component provides a polished, dark-themed diagnostic panel featuring full stack traces, file/line number extraction, and contextual troubleshooting instructions.
-- **Stability Guarantee**: Created `STABILITY.md` in the repository root explicitly documenting the library's strict adherence to backward compatibility and additive-only changes for public APIs since v1.0.0.
+- **Stability Guarantee**: Added an explicit backward-compatibility and additive-only policy for public APIs.
 
 ### Changed
 

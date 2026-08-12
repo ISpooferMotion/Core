@@ -14,10 +14,7 @@
 		},
 		"layerMode": {
 			"type": "string",
-			"enum": [
-				"root",
-				"viewport"
-			],
+			"enum": ["root", "viewport"],
 			"description": "Position non-default layers relative to the app root or viewport. Defaults to root.",
 			"default": "root"
 		},

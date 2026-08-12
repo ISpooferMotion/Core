@@ -13,9 +13,5 @@
 		"tests/browser/**/*.ts",
 		"tests/browser/**/*.tsx"
 	],
-	"exclude": [
-		"node_modules",
-		"dist",
-		"tests/browser/.tmp"
-	]
+	"exclude": ["node_modules", "dist", "tests/browser/.tmp"]
 }

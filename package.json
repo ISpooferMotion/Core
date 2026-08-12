@@ -50,11 +50,7 @@
 		"README.md",
 		"LICENSE",
 		"CHANGELOG.md",
-		"schema.json",
-		"STABILITY.md",
-		"MIGRATION.md",
-		"SECURITY.md",
-		"docs"
+		"schema.json"
 	],
 	"scripts": {
 		"build": "tsup && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/postbuild.mjs",

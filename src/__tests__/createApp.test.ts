@@ -392,7 +392,7 @@ describe("createApp", () => {
 		consoleError.mockRestore();
 	});
 
-	it("rolls back a prepared frame when Suspense abandons the render", async () => {
+	it("does not duplicate a consumed event when Suspense replays a frame", async () => {
 		let shouldSuspend = false;
 		let resolveSuspense: (() => void) | undefined;
 		const suspended = new Promise<void>((resolve) => {
@@ -441,7 +441,7 @@ describe("createApp", () => {
 			await suspended;
 		});
 
-		expect(observations.filter(Boolean)).toHaveLength(2);
+		expect(observations.filter(Boolean)).toHaveLength(1);
 		expect(container.textContent).toContain("ready");
 	});
 

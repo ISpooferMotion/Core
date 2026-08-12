@@ -410,10 +410,22 @@ export class Runtime {
 		return `${this.instanceId}-${token}-${hash}`;
 	}
 
-	beginFrame(): number {
+	beginFrame(preservePreparedState = false): number {
 		// A React replay can start a new render before the previous attempt commits.
 		// Treat the older attempt as abandoned and restore the last committed state.
-		if (this.frameTransaction) this.abortFrame(this.frameTransaction.id);
+		if (this.frameTransaction) {
+			if (preservePreparedState && this.frameTransaction.prepared) {
+				// React can replay a prepared render in Strict Mode or after a
+				// suspended child. Preserve logical state changes made by that
+				// attempt so one-shot widget events are not observed twice.
+				this.frameRoot = this.frameTransaction.snapshot.frameRoot;
+				this.workingFramePool.reset();
+				this.frameTransaction = null;
+				this.drawing = false;
+			} else {
+				this.abortFrame(this.frameTransaction.id);
+			}
+		}
 
 		const transactionId = this.nextFrameTransactionId++;
 		this.frameTransaction = {

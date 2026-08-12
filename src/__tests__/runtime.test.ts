@@ -1126,6 +1126,23 @@ describe("frame transactions", () => {
 		runtime.commitFrame(replay);
 	});
 
+	it("preserves a prepared React replay when requested", () => {
+		registerApp();
+		const id = "widget/Counter/react-replay";
+		runtime.getState(id, { count: 10 });
+
+		const prepared = runtime.beginFrame();
+		runtime.setState(id, { count: 99 });
+		runtime.prepareFrame(prepared);
+
+		const replay = runtime.beginFrame(true);
+		expect(runtime.getState<{ count: number }>(id, { count: 0 })).toEqual({
+			count: 99,
+		});
+		runtime.prepareFrame(replay);
+		runtime.commitFrame(replay);
+	});
+
 	it("does not consume one-shot state from an aborted frame", () => {
 		registerApp();
 		const id = "controls/Button/transaction";

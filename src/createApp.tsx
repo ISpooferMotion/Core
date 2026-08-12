@@ -3,8 +3,6 @@ import type { ErrorInfo, ReactNode } from "react";
 import {
 	createElement,
 	Fragment,
-	lazy,
-	Suspense,
 	useContext,
 	useEffect,
 	useLayoutEffect,
@@ -13,6 +11,7 @@ import {
 } from "react";
 import type { IsmConfig, LayerMode } from "./config";
 import { resolveConfig } from "./config";
+import { DevToolsOverlay } from "./DevTools";
 import {
 	ErrorFallback,
 	type ErrorFallbackContext,
@@ -22,11 +21,6 @@ import {
 import * as errors from "./errors";
 import { getActiveRuntimeOrNull, Runtime, withRuntime } from "./runtime";
 import type { FrameEntry, StorageAdapter, StorageFailure } from "./types";
-
-const LazyDevToolsOverlay = lazy(async () => {
-	const module = await import("./DevTools");
-	return { default: module.DevToolsOverlay };
-});
 
 /**
  * Render one frame entry and its children.
@@ -276,7 +270,7 @@ export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 		let frameTransactionId: number | null = null;
 
 		withRuntime(runtime, () => {
-			frameTransactionId = runtime.beginFrame();
+			frameTransactionId = runtime.beginFrame(true);
 			try {
 				drawFn();
 				runtime.prepareFrame(frameTransactionId);
@@ -349,14 +343,10 @@ export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 			Fragment,
 			null,
 			renderedFrame,
-			createElement(
-				Suspense,
-				{ fallback: null },
-				createElement(LazyDevToolsOverlay, {
-					runtime,
-					zIndex: config.layerZIndex + 1,
-				}),
-			),
+			createElement(DevToolsOverlay, {
+				runtime,
+				zIndex: config.layerZIndex + 1,
+			}),
 		);
 	}
 
