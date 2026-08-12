@@ -1,0 +1,49 @@
+{
+	"bundleSizes": {
+		"coreEsm": {
+			"entry": "dist/index.js",
+			"graph": "static",
+			"metric": "gzip",
+			"maxBytes": 55000
+		},
+		"coreCjs": {
+			"entry": "dist/index.cjs",
+			"graph": "file",
+			"metric": "raw",
+			"maxBytes": 180000
+		},
+		"devtoolsEsm": {
+			"entry": "dist/devtools.js",
+			"graph": "static",
+			"metric": "gzip",
+			"maxBytes": 45000
+		},
+		"devtoolsCjs": {
+			"entry": "dist/devtools.cjs",
+			"graph": "file",
+			"metric": "raw",
+			"maxBytes": 140000
+		},
+		"cli": {
+			"entry": "dist/cli.js",
+			"graph": "static",
+			"metric": "raw",
+			"maxBytes": 90000
+		}
+	},
+	"bundleRatios": [
+		{
+			"numerator": "devtoolsEsm",
+			"denominator": "coreEsm",
+			"metric": "gzip",
+			"maxRatio": 1.0
+		}
+	],
+	"runtime": {
+		"largestFrameWidgets": 10000,
+		"largestFrameMaxMs": 1500,
+		"maxPerWidgetSlowdownFrom1000To10000": 6,
+		"gc10000MaxMs": 1000,
+		"memoHit1000MaxMs": 500
+	}
+}

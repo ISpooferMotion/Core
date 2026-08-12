@@ -1,7 +1,10 @@
 {
 	"$schema": "https://typedoc.org/schema.json",
-	"entryPoints": ["src/index.ts"],
-	"out": "docs",
+	"entryPoints": [
+		"src/index.ts",
+		"src/devtools-entry.ts"
+	],
+	"out": ".typedoc",
 	"name": "@ispoofermotion/core",
 	"includeVersion": true,
 	"excludeInternal": true,
@@ -9,8 +12,8 @@
 	"plugin": [],
 	"readme": "README.md",
 	"validation": {
-		"notExported": false,
-		"invalidLink": false,
+		"notExported": true,
+		"invalidLink": true,
 		"notDocumented": false
 	},
 	"treatWarningsAsErrors": true

@@ -12,11 +12,10 @@ beforeEach(() => {
  * Run a small sample and return its median duration in milliseconds.
  *
  * Shared CI machines are noisy, so the first run is used for warmup and the
- * median is less affected by a random pause. This test only catches major
- * regressions such as accidentally making the hot path quadratic.
+ * median is less affected by a random pause. These tests are catastrophic
+ * regression guards; the scalable benchmark job owns trend-oriented budgets.
  */
 function medianDurationMs(fn: () => void, runs = 5): number {
-	// Warm up the JIT before collecting timings.
 	fn();
 
 	const durations: number[] = [];
@@ -35,7 +34,7 @@ function medianDurationMs(fn: () => void, runs = 5): number {
 	return durations[mid] ?? 0;
 }
 
-describe("500-widget performance budget", () => {
+describe("runtime performance guards", () => {
 	it("draws 500 widgets in a single frame well within budget", () => {
 		runtime.registerApp(() => {});
 
@@ -57,14 +56,10 @@ describe("500-widget performance budget", () => {
 		};
 
 		const median = medianDurationMs(drawFrame);
-		// The limit is intentionally loose.
-		// This catches obvious complexity regressions without making CI flaky.
-		// Five hundred simple widgets should stay far below the limit.
-		// A real regression will miss it by a large margin.
 		expect(median).toBeLessThan(100);
 	});
 
-	it("500-widget GC (all appear and disappear) completes well within budget", () => {
+	it("generation GC removes 500 disappeared widgets well within budget", () => {
 		runtime.registerApp(() => {});
 
 		const Widget = defineWidget<{}, [n: number], void>({
@@ -84,13 +79,22 @@ describe("500-widget performance budget", () => {
 			runtime.endFrame();
 		};
 
-		const emptyFrameWithGC = () => {
+		const emptyFramesWithGC = () => {
 			populate();
+			expect(runtime.getStateStore().size).toBe(500);
+
+			// The default policy keeps state for one missing committed frame.
 			runtime.beginFrame();
 			runtime.endFrame();
+			expect(runtime.getStateStore().size).toBe(500);
+
+			// The second missing frame crosses the generation retention boundary.
+			runtime.beginFrame();
+			runtime.endFrame();
+			expect(runtime.getStateStore().size).toBe(0);
 		};
 
-		const median = medianDurationMs(emptyFrameWithGC);
+		const median = medianDurationMs(emptyFramesWithGC);
 		expect(median).toBeLessThan(100);
 	});
 });

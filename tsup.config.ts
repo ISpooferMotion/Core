@@ -1,5 +1,4 @@
 /// <reference types="node" />
-import { copyFile } from "node:fs/promises";
 import { defineConfig } from "tsup";
 
 const shared = {
@@ -11,7 +10,7 @@ const shared = {
 export default defineConfig([
 	{
 		...shared,
-		entry: { index: "src/index.ts" },
+		entry: { index: "src/index.ts", devtools: "src/devtools-entry.ts" },
 		format: ["esm", "cjs"],
 		clean: true,
 	},
@@ -20,9 +19,5 @@ export default defineConfig([
 		entry: { cli: "src/cli.ts" },
 		format: ["esm"],
 		clean: false,
-		async onSuccess() {
-			await copyFile("src/styles.css", "dist/styles.css");
-			await copyFile("schema.json", "dist/schema.json");
-		},
 	},
 ]);

@@ -1,4 +1,4 @@
-import type { AriaRole, ReactNode } from "react";
+import type { AriaRole, CSSProperties, ReactNode } from "react";
 
 /**
  * Synchronous storage used for persistent widget state.
@@ -10,12 +10,72 @@ import type { AriaRole, ReactNode } from "react";
  * @since 2.0.0
  */
 export interface StorageAdapter {
-	/** Return the value stored for `key`, or a missing value. */
+	/** Return whether `key` exists, even when its stored value is `undefined`. */
+	has(key: string): boolean;
+	/** Return the value stored for an existing `key`. */
 	get(key: string): unknown;
 	/** Store `value` under `key`. */
 	set(key: string, value: unknown): void;
-	/** Remove `key` when the adapter supports deletion. */
-	delete?(key: string): void;
+	/** Remove `key`. */
+	delete(key: string): void;
+	/** Enumerate keys so a complete application namespace can be cleared. */
+	keys(): Iterable<string>;
+}
+
+/** Storage operation reported through `AppOptions.onStorageError`. */
+export type StorageOperation =
+	| "has"
+	| "get"
+	| "set"
+	| "delete"
+	| "keys"
+	| "serialize"
+	| "deserialize"
+	| "migrate"
+	| "validate";
+
+/** Details for a recoverable persistence failure. */
+export interface StorageFailure {
+	/** Operation that failed. */
+	operation: StorageOperation;
+	/** Fully namespaced storage key, when the failure applies to one key. */
+	key?: string;
+	/** Original adapter or persistence-hook failure. */
+	error: unknown;
+}
+
+/** Per-widget persistence schema and conversion hooks. */
+export interface PersistentStateOptions<S> {
+	/** Current stored-state schema version. Defaults to `1`. */
+	storageVersion?: number;
+	/** Reject malformed or stale values after deserialization/migration. */
+	validateStoredState?: (value: unknown) => value is S;
+	/** Convert a value written by an older schema version. */
+	migrateStoredState?: (
+		value: unknown,
+		fromVersion: number,
+		toVersion: number,
+	) => S;
+	/** Convert application state into a storage-safe payload. */
+	serialize?: (state: S) => unknown;
+	/** Convert the stored payload before migration/validation. */
+	deserialize?: (value: unknown) => unknown;
+}
+
+/**
+ * Resolved, type-erased persistence hooks used internally by the runtime.
+ * @internal
+ */
+export interface ResolvedPersistenceOptions {
+	storageVersion: number;
+	validateStoredState?: (value: unknown) => boolean;
+	migrateStoredState?: (
+		value: unknown,
+		fromVersion: number,
+		toVersion: number,
+	) => unknown;
+	serialize?: (state: unknown) => unknown;
+	deserialize?: (value: unknown) => unknown;
 }
 
 /**
@@ -27,7 +87,7 @@ export interface StorageAdapter {
  * @example
  * ```ts
  * render: ({ id, widgetProps }) =>
- *   createElement("button", { key: id, ...widgetProps }, "Click me")
+ *   createElement("button", { key: id, type: "button", ...widgetProps }, "Click me")
  * ```
  */
 export interface WidgetProps {
@@ -39,6 +99,8 @@ export interface WidgetProps {
 	 * Includes `ism-widget` and a class based on the lowercase widget name.
 	 */
 	className: string;
+	/** Structural inline styles required by the runtime, when applicable. */
+	style?: CSSProperties;
 	/** ARIA role from {@link WidgetConfig.a11y}. */
 	role?: AriaRole;
 	/** ARIA label from {@link WidgetConfig.a11y}. */
@@ -128,12 +190,13 @@ export interface WidgetRenderProps<S, A extends unknown[] = unknown[]> {
  *
  * @since 1.0.0
  */
-export interface WidgetConfig<S, A extends unknown[] = unknown[], R = void> {
+export interface WidgetConfig<S, A extends unknown[] = unknown[], R = void>
+	extends PersistentStateOptions<S> {
 	/**
 	 * Unique widget type name.
 	 *
-	 * It cannot be empty or contain `/`, `#`, or whitespace because those
-	 * characters are used when widget IDs are built.
+	 * Names must match `^[A-Za-z][A-Za-z0-9_-]*$` so generated CSS classes,
+	 * diagnostics, and identity metadata remain safe and predictable.
 	 */
 	name: string;
 
@@ -142,6 +205,11 @@ export interface WidgetConfig<S, A extends unknown[] = unknown[], R = void> {
 
 	/** Save this widget state through the app storage adapter. */
 	persistent?: boolean;
+
+	/**
+	 * Persistence schema/conversion fields are inherited from
+	 * {@link PersistentStateOptions}. They are used only when `persistent` is true.
+	 */
 
 	/** Open a child scope that must later be closed with {@link end}. */
 	scoped?: boolean;
@@ -196,16 +264,12 @@ export interface FrameEntry {
 	widgetName: string;
 	/** Arguments passed to the widget call. */
 	args: unknown[];
-	/** Whether this entry owns a child scope. */
-	scoped: boolean;
 	/** Entries recorded inside this widget scope. */
 	children: FrameEntry[];
-	/** Default state used when the instance is first seen. */
-	defaultState: unknown;
 	/** State snapshot used by the current React render. */
 	renderState: unknown;
-	/** Whether this state is saved through the storage adapter. */
-	persistent: boolean;
+	/** Persistence schema/conversion hooks for this widget instance. */
+	persistence: ResolvedPersistenceOptions | null;
 	/** DOM and accessibility props computed during the draw pass. */
 	widgetProps: WidgetProps;
 	/** Type erased render function created by {@link defineWidget}. */

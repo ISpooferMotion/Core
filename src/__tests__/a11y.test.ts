@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { makeInteractive } from "../makeInteractive";
 
+function keyboardEvent(
+	key: string,
+	options: { repeat?: boolean; preventDefault?: () => void } = {},
+): import("react").KeyboardEvent {
+	return {
+		key,
+		repeat: options.repeat ?? false,
+		preventDefault: options.preventDefault ?? (() => {}),
+	} as unknown as import("react").KeyboardEvent;
+}
+
 describe("makeInteractive", () => {
 	it("returns tabIndex 0 by default", () => {
 		const props = makeInteractive(() => {});
@@ -12,56 +23,81 @@ describe("makeInteractive", () => {
 		expect(props.tabIndex).toBe(-1);
 	});
 
-	it("fires onClick on Enter key", () => {
-		let called = false;
+	it("fires on Enter keydown", () => {
+		let called = 0;
 		const props = makeInteractive(() => {
-			called = true;
+			called++;
 		});
-		props.onKeyDown({
-			key: "Enter",
-			preventDefault: () => {},
-		} as unknown as import("react").KeyboardEvent);
-		expect(called).toBe(true);
+		props.onKeyDown(keyboardEvent("Enter"));
+		expect(called).toBe(1);
 	});
 
-	it("fires onClick on Space key", () => {
-		let called = false;
+	it("prevents Space scrolling on keydown and activates on keyup", () => {
+		let called = 0;
+		let prevented = 0;
 		const props = makeInteractive(() => {
-			called = true;
+			called++;
 		});
-		props.onKeyDown({
-			key: " ",
-			preventDefault: () => {},
-		} as unknown as import("react").KeyboardEvent);
-		expect(called).toBe(true);
+		props.onKeyDown(
+			keyboardEvent(" ", {
+				preventDefault: () => {
+					prevented++;
+				},
+			}),
+		);
+		expect(called).toBe(0);
+		props.onKeyUp(
+			keyboardEvent(" ", {
+				preventDefault: () => {
+					prevented++;
+				},
+			}),
+		);
+		expect(called).toBe(1);
+		expect(prevented).toBe(2);
 	});
 
-	it("does not fire onClick on unrelated key", () => {
-		let called = false;
+	it("does not activate Space keyup without a matching keydown", () => {
+		let called = 0;
 		const props = makeInteractive(() => {
-			called = true;
+			called++;
 		});
-		props.onKeyDown({
-			key: "Tab",
-			preventDefault: () => {},
-		} as unknown as import("react").KeyboardEvent);
-		expect(called).toBe(false);
+		props.onKeyUp(keyboardEvent(" "));
+		expect(called).toBe(0);
 	});
 
-	it("does not fire onClick when disabled", () => {
-		let called = false;
+	it("ignores repeated keydown activation", () => {
+		let called = 0;
+		const props = makeInteractive(() => {
+			called++;
+		});
+		props.onKeyDown(keyboardEvent("Enter", { repeat: true }));
+		props.onKeyDown(keyboardEvent("ArrowRight", { repeat: true }));
+		expect(called).toBe(0);
+	});
+
+	it("does not fire on unrelated key", () => {
+		let called = 0;
+		const props = makeInteractive(() => {
+			called++;
+		});
+		props.onKeyDown(keyboardEvent("Tab"));
+		props.onKeyUp(keyboardEvent("Tab"));
+		expect(called).toBe(0);
+	});
+
+	it("does not fire when disabled", () => {
+		let called = 0;
 		const props = makeInteractive(
 			() => {
-				called = true;
+				called++;
 			},
 			{ disabled: true },
 		);
-		props.onKeyDown({
-			key: "Enter",
-			preventDefault: () => {},
-		} as unknown as import("react").KeyboardEvent);
+		props.onKeyDown(keyboardEvent("Enter"));
+		props.onKeyUp(keyboardEvent(" "));
 		props.onClick();
-		expect(called).toBe(false);
+		expect(called).toBe(0);
 	});
 
 	it("includes aria-disabled when disabled", () => {
@@ -89,18 +125,15 @@ describe("makeInteractive", () => {
 		expect(pressedProps["aria-pressed"]).toBe(true);
 	});
 
-	it("fires onClick on extra keys", () => {
-		let called = false;
+	it("fires extra keys on keydown", () => {
+		let called = 0;
 		const props = makeInteractive(
 			() => {
-				called = true;
+				called++;
 			},
 			{ extraKeys: ["ArrowRight"] },
 		);
-		props.onKeyDown({
-			key: "ArrowRight",
-			preventDefault: () => {},
-		} as unknown as import("react").KeyboardEvent);
-		expect(called).toBe(true);
+		props.onKeyDown(keyboardEvent("ArrowRight"));
+		expect(called).toBe(1);
 	});
 });

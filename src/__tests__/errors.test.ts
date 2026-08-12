@@ -20,6 +20,7 @@ describe("error messages", () => {
 			"2 unclosed section(s)",
 		);
 		expect(errors.duplicateId("Button", "Save")).toContain("Save##1");
+		expect(errors.duplicateIdStrict("Button", "Save")).toContain("strictIds");
 		expect(errors.endOutsideDraw()).toContain("outside of a draw function");
 		expect(errors.idStackOutsideDraw("pushId")).toContain("pushId()");
 		expect(errors.popIdEmpty()).toContain("ID stack is empty");

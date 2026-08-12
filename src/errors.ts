@@ -1,8 +1,141 @@
 const PREFIX = "[ism]";
 
+/** Stable machine-readable diagnostic/error codes. */
+export type ISMErrorCode =
+	| "ISM_WIDGET_OUTSIDE_DRAW"
+	| "ISM_END_WITHOUT_SCOPE"
+	| "ISM_UNCLOSED_SCOPES"
+	| "ISM_DUPLICATE_ID"
+	| "ISM_DUPLICATE_ID_STRICT"
+	| "ISM_END_OUTSIDE_DRAW"
+	| "ISM_ID_STACK_OUTSIDE_DRAW"
+	| "ISM_POP_ID_EMPTY"
+	| "ISM_INVALID_WIDGET_NAME"
+	| "ISM_INVALID_DEFAULT_STATE"
+	| "ISM_NO_ACTIVE_RUNTIME"
+	| "ISM_UNBALANCED_CONTEXT"
+	| "ISM_POP_DEFAULT_LAYER"
+	| "ISM_DEFAULT_STATE_NOT_CLONEABLE"
+	| "ISM_DEFAULT_STATE_CLONE_FAILURE"
+	| "ISM_MEMO_UNBALANCED"
+	| "ISM_REACT_CONTEXT_IN_MEMO"
+	| "ISM_UNBALANCED_ID_STACK"
+	| "ISM_UNBALANCED_LAYER_STACK"
+	| "ISM_FRAME_TRANSACTION"
+	| "ISM_STORAGE_FAILURE"
+	| "ISM_DRAW_ERROR"
+	| "ISM_WIDGET_RENDER_ERROR"
+	| "ISM_CROSS_RUNTIME_ID_COLLISION"
+	| "ISM_DIAGNOSTIC_SINK_FAILURE";
+
+/** Severity emitted through the diagnostics sink. */
+export type DiagnosticLevel = "debug" | "warning" | "error";
+
+/** Structured runtime diagnostic suitable for logging or telemetry. */
+export interface ISMDiagnostic {
+	code: ISMErrorCode;
+	level: DiagnosticLevel;
+	message: string;
+	details?: Readonly<Record<string, unknown>>;
+	cause?: unknown;
+	runtimeId?: string;
+}
+
+/** Consumer-defined destination for structured diagnostics. */
+export type DiagnosticSink = (diagnostic: ISMDiagnostic) => void;
+
+/** Error with a stable code and optional structured details. */
+export class ISMError extends Error {
+	readonly code: ISMErrorCode;
+	readonly details?: Readonly<Record<string, unknown>>;
+
+	constructor(
+		code: ISMErrorCode,
+		message: string,
+		options: {
+			cause?: unknown;
+			details?: Readonly<Record<string, unknown>>;
+		} = {},
+	) {
+		super(
+			message,
+			options.cause === undefined ? undefined : { cause: options.cause },
+		);
+		this.name = "ISMError";
+		this.code = code;
+		if (options.details) this.details = options.details;
+	}
+}
+
+/** Create a coded error without losing the existing human-readable message. */
+export function createISMError(
+	code: ISMErrorCode,
+	message: string,
+	options?: {
+		cause?: unknown;
+		details?: Readonly<Record<string, unknown>>;
+	},
+): ISMError {
+	return new ISMError(code, message, options);
+}
+
+/** Build a structured diagnostic. */
+export function createDiagnostic(
+	code: ISMErrorCode,
+	level: DiagnosticLevel,
+	message: string,
+	options: {
+		cause?: unknown;
+		details?: Readonly<Record<string, unknown>>;
+		runtimeId?: string;
+	} = {},
+): ISMDiagnostic {
+	return {
+		code,
+		level,
+		message,
+		...(options.details ? { details: options.details } : {}),
+		...(options.cause !== undefined ? { cause: options.cause } : {}),
+		...(options.runtimeId ? { runtimeId: options.runtimeId } : {}),
+	};
+}
+
+/** Deliver a diagnostic, falling back to the console when no sink exists. */
+export function emitDiagnostic(
+	sink: DiagnosticSink | null | undefined,
+	diagnostic: ISMDiagnostic,
+): void {
+	if (sink) {
+		try {
+			sink(diagnostic);
+			return;
+		} catch (error) {
+			console.error(
+				`${PREFIX} [ISM_DIAGNOSTIC_SINK_FAILURE] Diagnostic sink threw while handling ${diagnostic.code}.`,
+				error,
+			);
+		}
+	}
+
+	const label = `${PREFIX} [${diagnostic.code}] ${diagnostic.message}`;
+	if (diagnostic.level === "debug")
+		console.debug(label, diagnostic.details ?? "");
+	else if (diagnostic.level === "warning")
+		console.warn(label, diagnostic.details ?? "", diagnostic.cause ?? "");
+	else console.error(label, diagnostic.details ?? "", diagnostic.cause ?? "");
+}
+
 /** Convert any caught value into a readable error message. */
 export function getErrorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
+}
+
+/** Return a stable code from a caught error when available. */
+export function getErrorCode(
+	error: unknown,
+	fallback: ISMErrorCode,
+): ISMErrorCode {
+	return error instanceof ISMError ? error.code : fallback;
 }
 
 /** A widget was called outside a draw pass. */
@@ -43,6 +176,17 @@ export function duplicateId(widgetName: string, displayLabel: string): string {
 	);
 }
 
+/** Strict ID mode rejected a duplicate logical widget identity. */
+export function duplicateIdStrict(
+	widgetName: string,
+	displayLabel: string,
+): string {
+	return (
+		`${PREFIX} strictIds rejected duplicate widget identity '${displayLabel}' for ${widgetName}. ` +
+		"Give repeated widgets stable unique identity with pushId()/withId() or an explicit ##/### ID suffix."
+	);
+}
+
 /** `end` was called outside a draw pass. */
 export function endOutsideDraw(): string {
 	return `${PREFIX} end() was called outside of a draw function. It can only be used inside the function you pass to createApp().`;
@@ -58,11 +202,11 @@ export function popIdEmpty(): string {
 	return `${PREFIX} popId() called but the ID stack is empty. Make sure every pushId() has a matching popId().`;
 }
 
-/** A widget name is empty or contains a reserved character. */
+/** A widget name is not safe for IDs, CSS classes, and diagnostics. */
 export function invalidWidgetName(name: string, reason: string): string {
 	return (
 		`${PREFIX} defineWidget() received an invalid widget name: ${JSON.stringify(name)}. ${reason} ` +
-		"Widget names must be non-empty strings that do not contain '/', '#', or whitespace."
+		"Widget names must match /^[A-Za-z][A-Za-z0-9_-]*$/ ."
 	);
 }
 

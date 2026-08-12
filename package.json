@@ -1,7 +1,7 @@
 {
 	"name": "@ispoofermotion/core",
-	"version": "3.3.2",
-	"description": "Immediate-mode UI runtime for Tauri + React.",
+	"version": "4.0.0",
+	"description": "Immediate-mode UI runtime for React, designed with Tauri applications in mind.",
 	"private": false,
 	"license": "MIT",
 	"repository": {
@@ -19,7 +19,7 @@
 		"tauri"
 	],
 	"engines": {
-		"node": ">=20"
+		"node": ">=22"
 	},
 	"publishConfig": {
 		"access": "public"
@@ -37,7 +37,12 @@
 			"import": "./dist/index.js",
 			"require": "./dist/index.cjs"
 		},
-		"./styles.css": "./dist/styles.css"
+		"./styles.css": "./dist/styles.css",
+		"./devtools": {
+			"types": "./dist/devtools-entry.d.ts",
+			"import": "./dist/devtools.js",
+			"require": "./dist/devtools.cjs"
+		}
 	},
 	"files": [
 		"dist",
@@ -45,22 +50,40 @@
 		"README.md",
 		"LICENSE",
 		"CHANGELOG.md",
-		"schema.json"
+		"schema.json",
+		"STABILITY.md",
+		"MIGRATION.md",
+		"SECURITY.md",
+		"docs"
 	],
 	"scripts": {
-		"build": "tsup && tsc --project tsconfig.build.json --emitDeclarationOnly",
+		"build": "tsup && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/postbuild.mjs",
 		"dev": "tsup --watch",
 		"prepare": "husky",
 		"typecheck": "tsc --noEmit",
+		"typecheck:browser": "tsc --project tsconfig.browser.json --noEmit",
 		"lint": "biome ci .",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage",
-		"docs": "typedoc",
+		"test:browser:build": "esbuild tests/browser/fixture.tsx --bundle --platform=browser --format=iife --sourcemap=inline --outfile=tests/browser/.tmp/fixture.js",
+		"test:browser": "bun run test:browser:build && bun run typecheck:browser && playwright test",
+		"docs": "typedoc && bun run docs:links",
 		"clean": "node scripts/clean.mjs",
+		"check:core": "bun run verify:lock && bun run lint && bun run typecheck && bun run test:coverage && bun run build && bun run size:check && bun run docs",
+		"check": "bun run check:core && bun run benchmark:runtime && bun run test:browser && bun run package:check",
 		"prepack": "bun run build",
 		"prepublishOnly": "bun run typecheck && bun run lint && bun run test:coverage",
-		"verify:lock": "node scripts/verify-lock.mjs"
+		"verify:lock": "node scripts/verify-lock.mjs",
+		"package:reproducible": "node scripts/verify-reproducible-build.mjs",
+		"package:pack": "node scripts/pack-package.mjs",
+		"package:validate": "node scripts/validate-package.mjs",
+		"package:consumers": "node scripts/test-consumers.mjs",
+		"package:check": "bun run package:reproducible && bun run size:check && bun run package:pack && bun run package:validate && bun run package:consumers",
+		"size:check": "node scripts/check-bundle-size.mjs",
+		"benchmark:runtime": "node scripts/benchmark-runtime.mjs",
+		"check:performance": "bun run size:check && bun run benchmark:runtime",
+		"docs:links": "node scripts/check-doc-links.mjs"
 	},
 	"lint-staged": {
 		"src/**/*.{ts,tsx}": [
@@ -68,15 +91,18 @@
 		]
 	},
 	"peerDependencies": {
-		"react": ">=18.0.0",
-		"react-dom": ">=18.0.0"
+		"react": ">=18 <20",
+		"react-dom": ">=18 <20"
 	},
 	"devDependencies": {
+		"@axe-core/playwright": "4.12.1",
 		"@biomejs/biome": "^2.5.7",
+		"@playwright/test": "1.62.1",
 		"@types/node": "^24.13.3",
 		"@types/react": "^19.2.18",
 		"@types/react-dom": "^19.2.4",
 		"@vitest/coverage-v8": "^4.1.10",
+		"esbuild": "0.28.2",
 		"happy-dom": "^20.11.2",
 		"husky": "^9.1.7",
 		"lint-staged": "^17.3.0",

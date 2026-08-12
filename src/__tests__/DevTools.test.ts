@@ -1,9 +1,9 @@
 import { act, createElement } from "react";
-import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../createApp";
 import { defineWidget } from "../defineWidget";
 import { mountedRuntimes } from "../runtime";
+import { cleanupTestRoots, createTestRoot } from "./reactTestUtils";
 
 let container: HTMLDivElement;
 beforeEach(() => {
@@ -11,8 +11,9 @@ beforeEach(() => {
 	document.body.appendChild(container);
 });
 afterEach(() => {
-	document.body.removeChild(container);
-	mountedRuntimes.clear();
+	cleanupTestRoots();
+	expect(mountedRuntimes.size).toBe(0);
+	document.body.replaceChildren();
 });
 
 const Button = defineWidget<{ clicked: boolean }, [label: string], boolean>({
@@ -41,7 +42,7 @@ async function click(el: Element | null) {
 }
 
 describe("DevTools", () => {
-	it("renders collapsed by default, showing only the open button", () => {
+	it("renders collapsed by default, showing only the open button", async () => {
 		const App = createApp(
 			() => {
 				Button("Save");
@@ -49,8 +50,8 @@ describe("DevTools", () => {
 			{ showDevTools: true },
 		);
 
-		const root = createRoot(container);
-		act(() => {
+		const root = createTestRoot(container);
+		await act(async () => {
 			root.render(createElement(App));
 		});
 
@@ -68,8 +69,8 @@ describe("DevTools", () => {
 			{ showDevTools: true },
 		);
 
-		const root = createRoot(container);
-		act(() => {
+		const root = createTestRoot(container);
+		await act(async () => {
 			root.render(createElement(App));
 		});
 
@@ -91,8 +92,8 @@ describe("DevTools", () => {
 			{ showDevTools: true },
 		);
 
-		const root = createRoot(container);
-		act(() => {
+		const root = createTestRoot(container);
+		await act(async () => {
 			root.render(createElement(App));
 		});
 		await click(container.querySelector('[aria-label="Open DevTools"]'));
@@ -119,8 +120,8 @@ describe("DevTools", () => {
 			{ showDevTools: true },
 		);
 
-		const root = createRoot(container);
-		act(() => {
+		const root = createTestRoot(container);
+		await act(async () => {
 			root.render(createElement(App));
 		});
 		await click(container.querySelector('[aria-label="Open DevTools"]'));
@@ -151,8 +152,10 @@ describe("DevTools", () => {
 			getReturnValue: () => undefined,
 		});
 		const App = createApp(() => Counter(), { showDevTools: true });
-		const root = createRoot(container);
-		act(() => root.render(createElement(App)));
+		const root = createTestRoot(container);
+		await act(async () => {
+			root.render(createElement(App));
+		});
 		await click(container.querySelector('[aria-label="Open DevTools"]'));
 
 		const stateTab = Array.from(
@@ -170,9 +173,9 @@ describe("DevTools", () => {
 
 	it("supports Home and End keyboard navigation", async () => {
 		const App = createApp(() => Button("Save"), { showDevTools: true });
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 
-		act(() => {
+		await act(async () => {
 			root.render(createElement(App));
 		});
 		await click(container.querySelector('[aria-label="Open DevTools"]'));
@@ -210,10 +213,10 @@ describe("DevTools", () => {
 		document.body.appendChild(secondContainer);
 		const AppA = createApp(() => Button("A"), { showDevTools: true });
 		const AppB = createApp(() => Button("B"), { showDevTools: true });
-		const rootA = createRoot(container);
-		const rootB = createRoot(secondContainer);
+		const rootA = createTestRoot(container);
+		const rootB = createTestRoot(secondContainer);
 
-		act(() => {
+		await act(async () => {
 			rootA.render(createElement(AppA));
 			rootB.render(createElement(AppB));
 		});
@@ -251,8 +254,8 @@ describe("DevTools", () => {
 			{ showDevTools: true },
 		);
 
-		const root = createRoot(container);
-		act(() => {
+		const root = createTestRoot(container);
+		await act(async () => {
 			root.render(createElement(App));
 		});
 		await click(container.querySelector('[aria-label="Open DevTools"]'));
@@ -263,5 +266,32 @@ describe("DevTools", () => {
 		expect(
 			container.querySelector('[aria-label="Open DevTools"]'),
 		).not.toBeNull();
+	});
+	it("closes on Escape and restores focus to the opener", async () => {
+		const App = createApp(() => Button("Save"), { showDevTools: true });
+		const root = createTestRoot(container);
+		await act(async () => {
+			root.render(createElement(App));
+		});
+		await click(container.querySelector('[aria-label="Open DevTools"]'));
+
+		const region = container.querySelector<HTMLElement>(
+			'[role="region"][aria-label="ISM DevTools"]',
+		);
+		const stateTab = Array.from(
+			container.querySelectorAll<HTMLElement>('[role="tab"]'),
+		).find((element) => element.textContent === "State");
+		stateTab?.focus();
+		await act(async () => {
+			region?.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+			);
+		});
+
+		const opener = container.querySelector<HTMLElement>(
+			'[aria-label="Open DevTools"]',
+		);
+		expect(opener).not.toBeNull();
+		expect(document.activeElement).toBe(opener);
 	});
 });

@@ -1,0 +1,21 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"declaration": false,
+		"declarationMap": false,
+		"noEmit": true,
+		"outDir": "./tests/browser/.tmp",
+		"rootDir": ".",
+		"allowArbitraryExtensions": true
+	},
+	"include": [
+		"playwright.config.ts",
+		"tests/browser/**/*.ts",
+		"tests/browser/**/*.tsx"
+	],
+	"exclude": [
+		"node_modules",
+		"dist",
+		"tests/browser/.tmp"
+	]
+}

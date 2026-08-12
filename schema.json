@@ -12,10 +12,35 @@
 			"description": "Base z-index applied to non-default layers (modals, tooltips, etc.). Defaults to 100.",
 			"default": 100
 		},
+		"layerMode": {
+			"type": "string",
+			"enum": [
+				"root",
+				"viewport"
+			],
+			"description": "Position non-default layers relative to the app root or viewport. Defaults to root.",
+			"default": "root"
+		},
 		"showDevTools": {
 			"type": "boolean",
 			"description": "Automatically mount the dockable DevTools UI over your app. Defaults to false.",
 			"default": false
+		},
+		"strictIds": {
+			"type": "boolean",
+			"description": "Throw when duplicate logical widget IDs are produced in one frame. Defaults to false.",
+			"default": false
+		},
+		"strictRuntime": {
+			"type": "boolean",
+			"description": "Turn runtime invariant diagnostics into frame-aborting coded errors. Defaults to false.",
+			"default": false
+		},
+		"stateRetentionFrames": {
+			"type": "integer",
+			"minimum": 0,
+			"description": "Committed frames that absent widget state and memo entries remain in memory before cleanup. Defaults to 1.",
+			"default": 1
 		}
 	},
 	"additionalProperties": false

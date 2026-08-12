@@ -1,7 +1,7 @@
 import { act, createElement } from "react";
-import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorFallback, ISMCoreErrorBoundary } from "../ErrorBoundary";
+import { cleanupTestRoots, createTestRoot } from "./reactTestUtils";
 
 let container: HTMLDivElement;
 beforeEach(() => {
@@ -9,7 +9,8 @@ beforeEach(() => {
 	document.body.appendChild(container);
 });
 afterEach(() => {
-	document.body.removeChild(container);
+	cleanupTestRoots();
+	document.body.replaceChildren();
 });
 
 function Bomb({ shouldThrow }: { shouldThrow: boolean }) {
@@ -21,7 +22,7 @@ function Bomb({ shouldThrow }: { shouldThrow: boolean }) {
 
 describe("ISMCoreErrorBoundary", () => {
 	it("renders children normally when nothing throws", () => {
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 		act(() => {
 			root.render(
 				createElement(
@@ -41,7 +42,7 @@ describe("ISMCoreErrorBoundary", () => {
 			.spyOn(console, "error")
 			.mockImplementation(() => {});
 
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 		act(() => {
 			root.render(
 				createElement(
@@ -63,7 +64,7 @@ describe("ISMCoreErrorBoundary", () => {
 			.mockImplementation(() => {});
 		const onError = vi.fn();
 
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 		act(() => {
 			root.render(
 				<ISMCoreErrorBoundary onError={onError}>
@@ -96,7 +97,7 @@ describe("ISMCoreErrorBoundary", () => {
 			);
 		}
 
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 		act(() => {
 			root.render(createElement(Wrapper));
 		});
@@ -127,7 +128,7 @@ describe("ISMCoreErrorBoundary", () => {
 
 describe("ErrorFallback", () => {
 	it("announces itself to assistive technology and hides the decorative icon", () => {
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 		act(() => {
 			root.render(
 				createElement(ErrorFallback, {
@@ -145,7 +146,7 @@ describe("ErrorFallback", () => {
 	});
 
 	it("keeps long error content accessible with viewport-bounded scrolling", () => {
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 		act(() => {
 			root.render(
 				createElement(ErrorFallback, {
@@ -162,7 +163,7 @@ describe("ErrorFallback", () => {
 	});
 
 	it("accepts a string error as well as an Error instance", () => {
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 		act(() => {
 			root.render(
 				createElement(ErrorFallback, {
@@ -175,7 +176,7 @@ describe("ErrorFallback", () => {
 	});
 
 	it("shows render-specific tips for kind='render' and draw-specific tips for kind='draw'", () => {
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 		act(() => {
 			root.render(
 				createElement(ErrorFallback, {
@@ -200,7 +201,7 @@ describe("ErrorFallback", () => {
 	});
 
 	it("shows a stack trace section when a stack or component stack is present, and omits it otherwise", () => {
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 		act(() => {
 			root.render(
 				createElement(ErrorFallback, { title: "t", error: "no stack here" }),
@@ -221,7 +222,7 @@ describe("ErrorFallback", () => {
 
 	it("shows a Try again button only when onRetry is provided, and calls it on click", () => {
 		const onRetry = vi.fn();
-		const root = createRoot(container);
+		const root = createTestRoot(container);
 
 		act(() => {
 			root.render(createElement(ErrorFallback, { title: "t", error: "x" }));
@@ -239,5 +240,48 @@ describe("ErrorFallback", () => {
 			button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 		});
 		expect(onRetry).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("production-safe error disclosure", () => {
+	it("hides sensitive message and stack details when showErrorDetails is false", () => {
+		const root = createTestRoot(container);
+		const secretError = new Error(
+			"secret filesystem path C:/private/source.ts",
+		);
+		act(() => {
+			root.render(
+				createElement(ErrorFallback, {
+					title: "Production error",
+					error: secretError,
+					errorCode: "ISM_WIDGET_RENDER_ERROR",
+					showErrorDetails: false,
+				}),
+			);
+		});
+		expect(container.textContent).toContain("Something went wrong.");
+		expect(container.textContent).toContain(
+			"Error ID: ISM_WIDGET_RENDER_ERROR",
+		);
+		expect(container.textContent).not.toContain("secret filesystem path");
+		expect(container.textContent).not.toContain("Stack Trace:");
+	});
+
+	it("emits a stable widget-render diagnostic code", () => {
+		const onDiagnostic = vi.fn();
+		const root = createTestRoot(container);
+		act(() => {
+			root.render(
+				<ISMCoreErrorBoundary onDiagnostic={onDiagnostic}>
+					<Bomb shouldThrow={true} />
+				</ISMCoreErrorBoundary>,
+			);
+		});
+		expect(onDiagnostic).toHaveBeenCalledWith(
+			expect.objectContaining({
+				code: "ISM_WIDGET_RENDER_ERROR",
+				level: "error",
+			}),
+		);
 	});
 });

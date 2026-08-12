@@ -5,6 +5,7 @@ import {
 	Runtime,
 	setActiveRuntime,
 } from "../runtime";
+import type { FrameEntry, StorageAdapter } from "../types";
 
 let runtime: Runtime;
 beforeEach(() => {
@@ -32,9 +33,9 @@ function registerApp() {
 	runtime.registerApp(() => {}); // The tests only need a mounted runtime, not a real render callback.
 }
 
-// Persistent state
+// In-memory state retention
 
-describe("state persistence", () => {
+describe("in-memory state retention", () => {
 	it("initializes state with defaultState on first access", () => {
 		registerApp();
 		const initial = runtime.getState("test/Button/ok", { clicked: false });
@@ -66,6 +67,446 @@ describe("state persistence", () => {
 		}));
 		const result = runtime.getState<{ n: number }>(id, { n: 0 });
 		expect(result.n).toBe(10);
+	});
+});
+
+class MemoryStorageAdapter implements StorageAdapter {
+	readonly values = new Map<string, unknown>();
+	readonly hasChecks: string[] = [];
+	readonly reads: string[] = [];
+	readonly writes: Array<[string, unknown]> = [];
+	readonly deletes: string[] = [];
+
+	has(key: string): boolean {
+		this.hasChecks.push(key);
+		return this.values.has(key);
+	}
+
+	get(key: string): unknown {
+		this.reads.push(key);
+		return this.values.get(key);
+	}
+
+	set(key: string, value: unknown): void {
+		this.writes.push([key, value]);
+		this.values.set(key, structuredClone(value));
+	}
+
+	delete(key: string): void {
+		this.deletes.push(key);
+		this.values.delete(key);
+	}
+
+	keys(): Iterable<string> {
+		return this.values.keys();
+	}
+}
+
+class ThrowingStorageAdapter extends MemoryStorageAdapter {
+	throwOn: "has" | "get" | "set" | "delete" | "keys" | null = null;
+
+	override has(key: string): boolean {
+		if (this.throwOn === "has") throw new Error("has failed");
+		return super.has(key);
+	}
+
+	override get(key: string): unknown {
+		if (this.throwOn === "get") throw new Error("get failed");
+		return super.get(key);
+	}
+
+	override set(key: string, value: unknown): void {
+		if (this.throwOn === "set") throw new Error("set failed");
+		super.set(key, value);
+	}
+
+	override delete(key: string): void {
+		if (this.throwOn === "delete") throw new Error("delete failed");
+		super.delete(key);
+	}
+
+	override keys(): Iterable<string> {
+		if (this.throwOn === "keys") throw new Error("keys failed");
+		return super.keys();
+	}
+}
+
+const TEST_NAMESPACE = "runtime-tests";
+
+function storageKey(namespace: string, id: string): string {
+	return `ism:v1:${encodeURIComponent(namespace)}:${encodeURIComponent(id)}`;
+}
+
+function storedPayload(
+	storage: MemoryStorageAdapter,
+	namespace: string,
+	id: string,
+) {
+	const record = storage.values.get(storageKey(namespace, id)) as
+		| { __ismState: 1; version: number; value: unknown }
+		| undefined;
+	return record?.value;
+}
+
+function useStorageRuntime(
+	storage: StorageAdapter,
+	namespace = TEST_NAMESPACE,
+	onStorageError?: ConstructorParameters<typeof Runtime>[2],
+): Runtime {
+	if (runtime.isAppMounted()) runtime.unregisterApp();
+	runtime = new Runtime(storage, namespace, onStorageError);
+	setActiveRuntime(runtime);
+	registerApp();
+	return runtime;
+}
+
+describe("storage adapter persistence", () => {
+	it("writes the default state when persistent storage is missing", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage);
+		const id = "settings/Counter";
+		const key = storageKey(TEST_NAMESPACE, id);
+
+		const state = runtime.getState(id, { count: 0 }, true);
+
+		expect(state).toEqual({ count: 0 });
+		expect(storage.hasChecks).toEqual([key]);
+		expect(storage.reads).toHaveLength(0);
+		expect(storage.writes).toHaveLength(1);
+		expect(storedPayload(storage, TEST_NAMESPACE, id)).toEqual({ count: 0 });
+	});
+
+	it("distinguishes missing storage from stored null and undefined", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage, "nullable");
+
+		runtime.getState<string | null>("nullable", null, true);
+		runtime.getState<string | undefined>("optional", undefined, true);
+
+		useStorageRuntime(storage, "nullable");
+
+		expect(
+			runtime.getState<string | null>("nullable", "fallback", true),
+		).toBeNull();
+		expect(
+			runtime.getState<string | undefined>("optional", "fallback", true),
+		).toBeUndefined();
+	});
+
+	it("uses an existing stored value without overwriting it", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage);
+		const id = "settings/Counter";
+		runtime.getState(id, { count: 0 }, true);
+		runtime.setState(id, { count: 7 }, true);
+		storage.writes.length = 0;
+
+		useStorageRuntime(storage);
+		const state = runtime.getState(id, { count: 0 }, true);
+
+		expect(state).toEqual({ count: 7 });
+		expect(storage.writes).toHaveLength(0);
+	});
+
+	it("writes persistent setState updates through to the adapter", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage);
+		const id = "settings/Counter";
+		runtime.getState(id, { count: 0 }, true);
+		storage.writes.length = 0;
+
+		runtime.setState(id, { count: 1 }, true);
+
+		expect(storage.writes).toHaveLength(1);
+		expect(storedPayload(storage, TEST_NAMESPACE, id)).toEqual({ count: 1 });
+	});
+
+	it("writes consumed one-shot state through to the adapter", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage);
+		const id = "controls/Button";
+		const current = runtime.getState(id, { clicked: true }, true);
+		storage.writes.length = 0;
+
+		runtime.consumeState(
+			id,
+			current,
+			(state) => ({ ...(state as { clicked: boolean }), clicked: false }),
+			true,
+		);
+
+		expect(storage.writes).toHaveLength(1);
+		expect(storedPayload(storage, TEST_NAMESPACE, id)).toEqual({
+			clicked: false,
+		});
+	});
+
+	it("isolates identical widget IDs by stable storage namespace", () => {
+		const storage = new MemoryStorageAdapter();
+		const id = "settings/Counter";
+		useStorageRuntime(storage, "app-a");
+		runtime.getState(id, { count: 0 }, true);
+		runtime.setState(id, { count: 11 }, true);
+
+		useStorageRuntime(storage, "app-b");
+		expect(runtime.getState(id, { count: 0 }, true)).toEqual({ count: 0 });
+		runtime.setState(id, { count: 22 }, true);
+
+		useStorageRuntime(storage, "app-a");
+		expect(runtime.getState(id, { count: 0 }, true)).toEqual({ count: 11 });
+		expect(storage.values.has(storageKey("app-a", id))).toBe(true);
+		expect(storage.values.has(storageKey("app-b", id))).toBe(true);
+	});
+
+	it("migrates versioned stored state and rewrites it at the current version", () => {
+		const storage = new MemoryStorageAdapter();
+		const id = "settings/Versioned";
+		useStorageRuntime(storage, "migration");
+		runtime.getState(id, { count: 2 }, { storageVersion: 1 });
+		runtime.setState(id, { count: 3 }, { storageVersion: 1 });
+
+		useStorageRuntime(storage, "migration");
+		const migrated = runtime.getState(
+			id,
+			{ count: 0, label: "new" },
+			{
+				storageVersion: 2,
+				migrateStoredState: (value, fromVersion, toVersion) => ({
+					count: (value as { count: number }).count,
+					label: `${fromVersion}->${toVersion}`,
+				}),
+				validateStoredState: (
+					value,
+				): value is { count: number; label: string } =>
+					typeof value === "object" &&
+					value !== null &&
+					typeof (value as { count?: unknown }).count === "number" &&
+					typeof (value as { label?: unknown }).label === "string",
+			},
+		);
+
+		expect(migrated).toEqual({ count: 3, label: "1->2" });
+		const record = storage.values.get(storageKey("migration", id)) as {
+			version: number;
+			value: unknown;
+		};
+		expect(record.version).toBe(2);
+		expect(record.value).toEqual(migrated);
+	});
+
+	it("rejects malformed runtime storage envelopes", () => {
+		const storage = new MemoryStorageAdapter();
+		const failures: string[] = [];
+		const id = "settings/CorruptEnvelope";
+		storage.values.set(storageKey("corrupt", id), {
+			__ismState: 1,
+			version: "broken",
+			value: { count: 99 },
+		});
+		useStorageRuntime(storage, "corrupt", (failure) => {
+			failures.push(failure.operation);
+		});
+
+		const state = runtime.getState(id, { count: 0 }, true);
+
+		expect(state).toEqual({ count: 0 });
+		expect(failures).toEqual(["validate"]);
+		expect(storedPayload(storage, "corrupt", id)).toEqual({ count: 0 });
+	});
+
+	it("falls back to default state when stored data fails validation", () => {
+		const storage = new MemoryStorageAdapter();
+		const failures: string[] = [];
+		const id = "settings/Validated";
+		useStorageRuntime(storage, "validation");
+		runtime.getState(id, "bad", { storageVersion: 1 });
+
+		useStorageRuntime(storage, "validation", (failure) => {
+			failures.push(failure.operation);
+		});
+		const state = runtime.getState(id, 42, {
+			storageVersion: 1,
+			validateStoredState: (value): value is number =>
+				typeof value === "number",
+		});
+
+		expect(state).toBe(42);
+		expect(failures).toEqual(["validate"]);
+		expect(storedPayload(storage, "validation", id)).toBe(42);
+	});
+
+	it("supports custom serialization and deserialization", () => {
+		const storage = new MemoryStorageAdapter();
+		const id = "settings/Serialized";
+		const persistence = {
+			storageVersion: 1,
+			serialize: (value: unknown) => JSON.stringify(value),
+			deserialize: (value: unknown) => JSON.parse(String(value)) as unknown,
+		};
+		useStorageRuntime(storage, "serialization");
+		runtime.getState(id, { count: 1 }, persistence);
+		runtime.setState(id, { count: 8 }, persistence);
+
+		expect(storedPayload(storage, "serialization", id)).toBe('{"count":8}');
+
+		useStorageRuntime(storage, "serialization");
+		expect(runtime.getState(id, { count: 0 }, persistence)).toEqual({
+			count: 8,
+		});
+	});
+
+	it("reports adapter existence failures without attempting a write", () => {
+		const storage = new ThrowingStorageAdapter();
+		const failures: string[] = [];
+		storage.throwOn = "has";
+		useStorageRuntime(storage, "has-failure", (failure) => {
+			failures.push(failure.operation);
+		});
+
+		const state = runtime.getState("settings/HasFailure", { count: 0 }, true);
+
+		expect(state).toEqual({ count: 0 });
+		expect(failures).toEqual(["has"]);
+		expect(storage.writes).toHaveLength(0);
+	});
+
+	it("reports adapter read failures without overwriting storage", () => {
+		const storage = new ThrowingStorageAdapter();
+		const failures: string[] = [];
+		const id = "settings/ReadFailure";
+		const key = storageKey("failure", id);
+		storage.values.set(key, { __ismState: 1, version: 1, value: { count: 9 } });
+		storage.throwOn = "get";
+		useStorageRuntime(storage, "failure", (failure) => {
+			failures.push(failure.operation);
+		});
+
+		const state = runtime.getState(id, { count: 0 }, true);
+
+		expect(state).toEqual({ count: 0 });
+		expect(failures).toEqual(["get"]);
+		expect(storage.writes).toHaveLength(0);
+		expect(storage.values.get(key)).toEqual({
+			__ismState: 1,
+			version: 1,
+			value: { count: 9 },
+		});
+	});
+
+	it("keeps in-memory state consistent when adapter writes throw", () => {
+		const storage = new ThrowingStorageAdapter();
+		const failures: string[] = [];
+		storage.throwOn = "set";
+		useStorageRuntime(storage, "write-failure", (failure) => {
+			failures.push(failure.operation);
+		});
+		const id = "settings/WriteFailure";
+
+		runtime.getState(id, { count: 0 }, true);
+		runtime.setState(id, { count: 5 }, true);
+
+		expect(runtime.getState(id, { count: 0 }, true)).toEqual({ count: 5 });
+		expect(failures).toEqual(["set", "set"]);
+	});
+
+	it("reports delete failures while keeping the reset in memory", () => {
+		const storage = new ThrowingStorageAdapter();
+		const failures: string[] = [];
+		const id = "settings/DeleteFailure";
+		useStorageRuntime(storage, "delete-failure", (failure) => {
+			failures.push(failure.operation);
+		});
+		runtime.getState(id, { count: 0 }, true);
+		runtime.setState(id, { count: 7 }, true);
+		storage.throwOn = "delete";
+
+		expect(runtime.resetState(id)).toBe(true);
+		expect(runtime.getState(id, { count: 99 }, true)).toEqual({ count: 0 });
+		expect(failures).toEqual(["delete"]);
+		expect(storedPayload(storage, "delete-failure", id)).toEqual({ count: 7 });
+	});
+
+	it("resets live state and deletes its persisted value", () => {
+		const storage = new MemoryStorageAdapter();
+		const id = "settings/Resettable";
+		useStorageRuntime(storage, "reset");
+		runtime.getState(id, { count: 0 }, true);
+		runtime.setState(id, { count: 9 }, true);
+
+		expect(runtime.resetState(id)).toBe(true);
+		expect(runtime.getState(id, { count: 99 }, true)).toEqual({ count: 0 });
+		expect(storage.values.has(storageKey("reset", id))).toBe(false);
+	});
+
+	it("clears known persistent state without touching another namespace", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage, "clear-a");
+		runtime.getState("one", 1, true);
+		runtime.getState("two", 2, true);
+		storage.values.set(storageKey("clear-b", "other"), {
+			__ismState: 1,
+			version: 1,
+			value: 3,
+		});
+
+		expect(runtime.clearPersistentState()).toBe(2);
+		expect(storage.values.has(storageKey("clear-a", "one"))).toBe(false);
+		expect(storage.values.has(storageKey("clear-a", "two"))).toBe(false);
+		expect(storage.values.has(storageKey("clear-b", "other"))).toBe(true);
+	});
+
+	it("namespace clearing overrides pending writes in a speculative frame", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage, "pending-clear");
+		const transaction = runtime.beginFrame();
+		runtime.getState("new-state", { count: 1 }, true);
+
+		expect(runtime.clearStorageNamespace()).toBe(1);
+		runtime.prepareFrame(transaction);
+		runtime.commitFrame(transaction);
+
+		expect(storage.values.has(storageKey("pending-clear", "new-state"))).toBe(
+			false,
+		);
+	});
+
+	it("clears every key in its namespace, including state not loaded this session", () => {
+		const storage = new MemoryStorageAdapter();
+		storage.values.set(storageKey("clear-all", "old"), 1);
+		storage.values.set(storageKey("clear-all", "older"), 2);
+		storage.values.set(storageKey("keep", "other"), 3);
+		useStorageRuntime(storage, "clear-all");
+
+		expect(runtime.clearStorageNamespace()).toBe(2);
+		expect(storage.values.has(storageKey("clear-all", "old"))).toBe(false);
+		expect(storage.values.has(storageKey("clear-all", "older"))).toBe(false);
+		expect(storage.values.has(storageKey("keep", "other"))).toBe(true);
+	});
+
+	it("reports namespace enumeration failures without throwing", () => {
+		const storage = new ThrowingStorageAdapter();
+		const failures: string[] = [];
+		storage.throwOn = "keys";
+		useStorageRuntime(storage, "keys-failure", (failure) => {
+			failures.push(failure.operation);
+		});
+
+		expect(runtime.clearStorageNamespace()).toBe(0);
+		expect(failures).toEqual(["keys"]);
+	});
+
+	it("does not touch the adapter for non-persistent state", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage);
+		const id = "ephemeral/Counter";
+
+		runtime.getState(id, { count: 0 });
+		runtime.setState(id, { count: 1 });
+
+		expect(storage.hasChecks).toHaveLength(0);
+		expect(storage.reads).toHaveLength(0);
+		expect(storage.writes).toHaveLength(0);
+		expect(storage.values.size).toBe(0);
 	});
 });
 
@@ -109,11 +550,9 @@ describe("ID collision", () => {
 				id: parentId,
 				widgetName: "Panel",
 				args: [],
-				scoped: true,
 				children: [],
-				defaultState: {},
 				renderState: {},
-				persistent: false,
+				persistence: null,
 				widgetProps: {
 					"data-ism-widget": "Panel",
 					"data-ism-id": parentId,
@@ -158,6 +597,68 @@ describe("ID collision", () => {
 	});
 });
 
+describe("strict ID mode", () => {
+	it("throws instead of suffixing duplicate logical IDs", () => {
+		if (runtime.isAppMounted()) runtime.unregisterApp();
+		runtime = new Runtime(undefined, undefined, undefined, true);
+		registerApp();
+
+		runtime.beginFrame();
+		runtime.buildId("Button", "Delete");
+		expect(() => runtime.buildId("Button", "Delete")).toThrow("strictIds");
+		runtime.abortFrame();
+	});
+
+	it("allows repeated visible labels when pushId supplies stable identity", () => {
+		if (runtime.isAppMounted()) runtime.unregisterApp();
+		runtime = new Runtime(undefined, undefined, undefined, true);
+		registerApp();
+
+		runtime.beginFrame();
+		runtime.pushIdSegment("row-1");
+		const first = runtime.buildId("Button", "Delete");
+		runtime.popIdSegment();
+		runtime.pushIdSegment("row-2");
+		const second = runtime.buildId("Button", "Delete");
+		runtime.popIdSegment();
+		runtime.endFrame();
+
+		expect(first).not.toBe(second);
+	});
+
+	it("still rejects the same explicit ID suffix twice", () => {
+		if (runtime.isAppMounted()) runtime.unregisterApp();
+		runtime = new Runtime(undefined, undefined, undefined, true);
+		registerApp();
+
+		runtime.beginFrame();
+		runtime.buildId("Button", "Delete###item-7");
+		expect(() => runtime.buildId("Button", "Remove###item-7")).toThrow(
+			"strictIds",
+		);
+		runtime.abortFrame();
+	});
+});
+
+describe("DOM/runtime identity", () => {
+	it("allocates unique v4 runtime namespaces from the shared global registry", () => {
+		const other = new Runtime();
+		expect(runtime.getInstanceId()).toMatch(/^ism-runtime-v4-\d+$/);
+		expect(other.getInstanceId()).toMatch(/^ism-runtime-v4-\d+$/);
+		expect(other.getInstanceId()).not.toBe(runtime.getInstanceId());
+	});
+
+	it("creates compact DOM-safe IDs without embedding logical labels", () => {
+		const logical = 'Button/Save % / [x] "quoted" 😀';
+		const domId = runtime.getDomId("description", logical);
+		expect(domId).toMatch(/^ism-runtime-v4-\d+-description-[A-Za-z0-9]+$/);
+		expect(domId).not.toContain("Save");
+		expect(domId).not.toContain("😀");
+		expect(runtime.getDomId("description", logical)).toBe(domId);
+		expect(runtime.getDomId("description", `${logical}!`)).not.toBe(domId);
+	});
+});
+
 // State cleanup
 
 describe("state GC", () => {
@@ -173,11 +674,9 @@ describe("state GC", () => {
 				id,
 				widgetName: "Button",
 				args: [],
-				scoped: false,
 				children: [],
-				defaultState: {},
 				renderState: {},
-				persistent: false,
+				persistence: null,
 				widgetProps: {
 					"data-ism-widget": "Button",
 					"data-ism-id": id,
@@ -197,10 +696,7 @@ describe("state GC", () => {
 			// No widget is registered in this frame.
 		});
 
-		// Move past the cleanup timeout.
-		vi.advanceTimersByTime(1500);
-
-		// Finish another frame so expired state is removed.
+		// A second missing committed frame exceeds the default one-frame retention.
 		drawPass(() => {});
 
 		// A new read should return the default instead of the old value.
@@ -215,6 +711,22 @@ describe("state GC", () => {
 		expect(fresh).toEqual({ clicked: true });
 	});
 
+	it("uses committed frame generations instead of wall-clock time", () => {
+		registerApp();
+		const id = "Button/Generation";
+
+		drawPass(() => {
+			runtime.getState(id, { value: 7 });
+		});
+		vi.advanceTimersByTime(60_000);
+		expect(runtime.getStateStore().get(id)).toEqual({ value: 7 });
+
+		drawPass(() => {});
+		expect(runtime.getStateStore().has(id)).toBe(true);
+		drawPass(() => {});
+		expect(runtime.getStateStore().has(id)).toBe(false);
+	});
+
 	it("does not leak memory after 1000-widget add/remove cycles", () => {
 		registerApp();
 
@@ -226,11 +738,9 @@ describe("state GC", () => {
 						id,
 						widgetName: "Button",
 						args: [],
-						scoped: false,
 						children: [],
-						defaultState: {},
 						renderState: {},
-						persistent: false,
+						persistence: null,
 						widgetProps: {
 							"data-ism-widget": "Button",
 							"data-ism-id": id,
@@ -241,10 +751,13 @@ describe("state GC", () => {
 					runtime.getState(id, {});
 				}
 			});
-			// An empty frame lets every previous widget expire.
-			vi.advanceTimersByTime(1500);
+			// One empty frame retains the just-removed widgets; the next cycle
+			// advances the generation far enough to collect older state.
 			drawPass(() => {});
 		}
+
+		// Advance one more missing generation so the final cycle is collected.
+		drawPass(() => {});
 
 		// The repeated cycle should not leave old state behind.
 		// The final empty frame removes the last active widget.
@@ -267,11 +780,9 @@ describe("scope management", () => {
 				id: parentId,
 				widgetName: "Panel",
 				args: [],
-				scoped: true,
 				children: [],
-				defaultState: {},
 				renderState: {},
-				persistent: false,
+				persistence: null,
 				widgetProps: {
 					"data-ism-widget": "Panel",
 					"data-ism-id": parentId,
@@ -287,11 +798,9 @@ describe("scope management", () => {
 				id: childId,
 				widgetName: "Button",
 				args: [],
-				scoped: false,
 				children: [],
-				defaultState: {},
 				renderState: {},
-				persistent: false,
+				persistence: null,
 				widgetProps: {
 					"data-ism-widget": "Button",
 					"data-ism-id": childId,
@@ -356,10 +865,7 @@ describe("runtime diagnostics", () => {
 		entry.id = id;
 		entry.widgetName = "Diagnostic";
 		entry.args = [label];
-		entry.scoped = false;
-		entry.defaultState = { count: 0 };
 		entry.renderState = runtime.getState(id, { count: 0 });
-		entry.persistent = false;
 		entry.widgetProps = {
 			"data-ism-widget": "Diagnostic",
 			"data-ism-id": id,
@@ -394,6 +900,58 @@ describe("runtime diagnostics", () => {
 		expect(runtime.getInspectionRevision("tree")).toBe(firstTree + 1);
 	});
 
+	it("defers tree fingerprinting until inspection is requested", () => {
+		registerApp();
+		drawPass(() => {
+			addFrameEntry("lazy");
+		});
+
+		const internals = runtime as unknown as {
+			treeRevision: number;
+			lastInspectedTreeEpoch: number;
+		};
+		expect(internals.treeRevision).toBe(0);
+		expect(internals.lastInspectedTreeEpoch).toBe(-1);
+		expect(runtime.getInspectionRevision("tree")).toBe(1);
+	});
+
+	it("handles deeply nested inspection and memo snapshots iteratively", () => {
+		registerApp();
+		const makeEntry = (index: number): FrameEntry => ({
+			id: `Deep/${index}`,
+			widgetName: "Deep",
+			args: [index],
+			children: [],
+			renderState: null,
+			persistence: null,
+			widgetProps: {
+				"data-ism-widget": "Deep",
+				"data-ism-id": `Deep/${index}`,
+				className: "ism-widget ism-deep",
+			},
+			renderFn: () => null,
+		});
+
+		const rootEntry = makeEntry(0);
+		let cursor = rootEntry;
+		for (let index = 1; index < 12_000; index++) {
+			const child = makeEntry(index);
+			cursor.children.push(child);
+			cursor = child;
+		}
+
+		runtime.beginFrame();
+		runtime.getCurrentParentChildren().push(rootEntry);
+		runtime.endFrame();
+		expect(() => runtime.getInspectionRevision("tree")).not.toThrow();
+
+		runtime.setMemo("deep-snapshot", [], [rootEntry]);
+		expect(() => {
+			runtime.beginFrame();
+			runtime.abortFrame();
+		}).not.toThrow();
+	});
+
 	it("trims the retained frame pool after a transient large frame", () => {
 		registerApp();
 		drawPass(() => {
@@ -405,9 +963,9 @@ describe("runtime diagnostics", () => {
 
 		const retained = (
 			runtime as unknown as {
-				framePool: { pool: unknown[] };
+				workingFramePool: { pool: unknown[] };
 			}
-		).framePool.pool.length;
+		).workingFramePool.pool.length;
 		expect(retained).toBeLessThanOrEqual(128);
 	});
 });
@@ -485,5 +1043,116 @@ describe("getRuntimeForId", () => {
 
 		warnSpy.mockRestore();
 		other.unregisterApp();
+	});
+});
+
+describe("frame transactions", () => {
+	it("rolls speculative state back when a frame aborts", () => {
+		registerApp();
+		const id = "widget/Counter/transaction";
+		runtime.getState(id, { count: 1 });
+		const beforeRevision = runtime.getInspectionRevision("state");
+
+		const transaction = runtime.beginFrame();
+		runtime.getState(id, { count: 0 });
+		runtime.setState(id, { count: 2 });
+		runtime.setFocus(id);
+		runtime.prepareFrame(transaction);
+		runtime.abortFrame(transaction);
+
+		expect(runtime.getState<{ count: number }>(id, { count: 0 })).toEqual({
+			count: 1,
+		});
+		expect(runtime.getFocusedId()).toBeNull();
+		expect(runtime.getInspectionRevision("state")).toBe(beforeRevision);
+	});
+
+	it("defers persistent writes until commit", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage);
+		const id = "settings/Transactional";
+
+		const transaction = runtime.beginFrame();
+		runtime.getState(id, { count: 0 }, true);
+		runtime.setState(id, { count: 1 }, true);
+		runtime.prepareFrame(transaction);
+
+		expect(storage.writes).toHaveLength(0);
+		runtime.commitFrame(transaction);
+		expect(storage.writes).toHaveLength(1);
+		expect(storedPayload(storage, TEST_NAMESPACE, id)).toEqual({ count: 1 });
+	});
+
+	it("discards pending persistent writes when a frame aborts", () => {
+		const storage = new MemoryStorageAdapter();
+		const id = "settings/Transactional";
+		const key = storageKey(TEST_NAMESPACE, id);
+		storage.values.set(key, {
+			__ismState: 1,
+			version: 1,
+			value: { count: 4 },
+		});
+		useStorageRuntime(storage);
+
+		const transaction = runtime.beginFrame();
+		const current = runtime.getState<{ count: number }>(id, { count: 0 }, true);
+		runtime.setState(id, { count: current.count + 1 }, true);
+		runtime.prepareFrame(transaction);
+		runtime.abortFrame(transaction);
+
+		expect(storage.writes).toHaveLength(0);
+		expect(storedPayload(storage, TEST_NAMESPACE, id)).toEqual({ count: 4 });
+		expect(runtime.getState<{ count: number }>(id, { count: 0 }, true)).toEqual(
+			{
+				count: 4,
+			},
+		);
+	});
+
+	it("automatically rolls back an abandoned attempt before a replay", () => {
+		registerApp();
+		const id = "widget/Counter/replay";
+		runtime.getState(id, { count: 10 });
+
+		const abandoned = runtime.beginFrame();
+		runtime.setState(id, { count: 99 });
+		runtime.prepareFrame(abandoned);
+
+		const replay = runtime.beginFrame();
+		expect(runtime.getState<{ count: number }>(id, { count: 0 })).toEqual({
+			count: 10,
+		});
+		runtime.prepareFrame(replay);
+		runtime.commitFrame(replay);
+	});
+
+	it("does not consume one-shot state from an aborted frame", () => {
+		registerApp();
+		const id = "controls/Button/transaction";
+		runtime.getState(id, { clicked: true });
+
+		const transaction = runtime.beginFrame();
+		const current = runtime.getState<{ clicked: boolean }>(id, {
+			clicked: false,
+		});
+		runtime.consumeState(id, current, (state) => ({
+			...(state as { clicked: boolean }),
+			clicked: false,
+		}));
+		runtime.prepareFrame(transaction);
+		runtime.abortFrame(transaction);
+
+		expect(
+			runtime.getState<{ clicked: boolean }>(id, { clicked: false }),
+		).toEqual({ clicked: true });
+	});
+
+	it("commits prepared frames idempotently for React StrictMode effects", () => {
+		registerApp();
+		const transaction = runtime.beginFrame();
+		runtime.prepareFrame(transaction);
+		runtime.commitFrame(transaction);
+
+		expect(() => runtime.commitFrame(transaction)).not.toThrow();
 	});
 });

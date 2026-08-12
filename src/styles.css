@@ -6,13 +6,11 @@
 /* Shared widget root */
 .ism-widget {
 	box-sizing: border-box;
-	/* Named layers ignore empty space, but their widgets still need input. */
-	pointer-events: auto;
 }
 
-/* App root created by createApp */
-[data-ism-root] {
-	display: contents;
+/* Real containing block created by createApp for root-relative layers. */
+[data-ism-layer-host] {
+	box-sizing: border-box;
 }
 
 /* Error fallback root */

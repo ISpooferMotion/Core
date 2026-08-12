@@ -7,12 +7,13 @@ on:
     branches: [main]
 
 concurrency:
-  group: release-${{ github.event.workflow_run.head_sha }}
+  group: npm-release
   cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: >-
       ${{ github.event.workflow_run.conclusion == 'success' &&
           github.event.workflow_run.head_repository.full_name == github.repository }}
@@ -22,50 +23,100 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
           ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Check whether the package version changed
+        id: release-needed
+        shell: bash
+        run: echo "changed=$(node scripts/release-version-changed.mjs HEAD^)" >> "$GITHUB_OUTPUT"
+
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: steps.release-needed.outputs.changed == 'true'
         with:
           bun-version: "1.3.14"
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.release-needed.outputs.changed == 'true'
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
-          scope: "@ispoofermotion"
-      - run: bun run verify:lock
-      - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bun run prepublishOnly
-      - run: bun run build
+
+      - name: Install OIDC-capable npm
+        if: steps.release-needed.outputs.changed == 'true'
+        run: npm install --global npm@12.0.2
+
+      - name: Install dependencies
+        if: steps.release-needed.outputs.changed == 'true'
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build the release artifact
+        if: steps.release-needed.outputs.changed == 'true'
+        run: |
+          bun run clean
+          bun run build
+          bun run package:pack
+
+      - name: Validate the exact tarball
+        if: steps.release-needed.outputs.changed == 'true'
+        run: |
+          bun run size:check
+          bun run package:validate
+          bun run package:consumers
+
+      - name: Generate SPDX SBOM
+        if: steps.release-needed.outputs.changed == 'true'
+        shell: bash
+        run: npm sbom --sbom-format=spdx --omit=dev > .artifacts/sbom.spdx.json
+
       - name: Read package metadata
+        if: steps.release-needed.outputs.changed == 'true'
         id: pkg
         shell: bash
         run: |
           echo "name=$(node -p "require('./package.json').name")" >> "$GITHUB_OUTPUT"
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Check npm publication
+        if: steps.release-needed.outputs.changed == 'true'
         id: npm
         shell: bash
         run: |
-          if npm view "${{ steps.pkg.outputs.name }}@${{ steps.pkg.outputs.version }}" version >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Publish to npm
-        if: steps.npm.outputs.exists == 'false'
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          set +e
+          node scripts/check-npm-version.mjs \
+            "${{ steps.pkg.outputs.name }}" \
+            "${{ steps.pkg.outputs.version }}"
+          status=$?
+          set -e
+
+          case "$status" in
+            0) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$status" ;;
+          esac
+
+      - name: Publish exact validated tarball with npm OIDC
+        if: steps.release-needed.outputs.changed == 'true' && steps.npm.outputs.exists == 'false'
+        run: npm publish .artifacts/package.tgz --access public --ignore-scripts
+
       - name: Extract release notes
+        if: steps.release-needed.outputs.changed == 'true'
         id: changelog
         shell: bash
         run: |
-          VERSION="${{ steps.pkg.outputs.version }}"
-          awk "/^## \\[${VERSION}\\]/{found=1; next} found && /^## \\[/{exit} found{print}" CHANGELOG.md > /tmp/release_notes.md
-          echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
+          node scripts/extract-release-notes.mjs \
+            "${{ steps.pkg.outputs.version }}" \
+            .artifacts/release-notes.md
+          echo "notes_file=.artifacts/release-notes.md" >> "$GITHUB_OUTPUT"
+
       - name: Create or update GitHub release
+        if: steps.release-needed.outputs.changed == 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: "v${{ steps.pkg.outputs.version }}"
           name: "v${{ steps.pkg.outputs.version }}"
           body_path: ${{ steps.changelog.outputs.notes_file }}
+          files: |
+            .artifacts/package.tgz
+            .artifacts/package.sha256
+            .artifacts/sbom.spdx.json

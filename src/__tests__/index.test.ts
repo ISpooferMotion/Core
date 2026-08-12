@@ -14,6 +14,9 @@ import {
 	pushId,
 	pushLayer,
 	setFocus,
+	withContext,
+	withId,
+	withLayer,
 } from "../index";
 import { mountedRuntimes, Runtime, setActiveRuntime } from "../runtime";
 
@@ -81,6 +84,28 @@ describe("pushId / popId", () => {
 	});
 });
 
+describe("withId", () => {
+	it("restores the ID stack after success", () => {
+		drawPass(() => {
+			const nested = withId("row-1", () => runtime.buildId("Button", "save"));
+			const outer = runtime.buildId("Button", "save");
+			expect(nested).toContain("row-1/");
+			expect(outer).not.toContain("row-1/");
+		});
+	});
+
+	it("restores the ID stack when the closure throws", () => {
+		drawPass(() => {
+			expect(() =>
+				withId("temporary", () => {
+					throw new Error("boom");
+				}),
+			).toThrow("boom");
+			expect(runtime.buildId("Button", "save")).not.toContain("temporary/");
+		});
+	});
+});
+
 describe("pushContext / popContext / getContext", () => {
 	it("throws when any context function is called outside a draw pass", () => {
 		expect(() => pushContext("theme", "dark")).toThrow("[ism]");
@@ -137,6 +162,23 @@ describe("pushContext / popContext / getContext", () => {
 	});
 });
 
+describe("withContext", () => {
+	it("restores context after success and failure", () => {
+		drawPass(() => {
+			expect(withContext("theme", "dark", () => getContext("theme"))).toBe(
+				"dark",
+			);
+			expect(getContext("theme")).toBeUndefined();
+			expect(() =>
+				withContext("theme", "light", () => {
+					throw new Error("boom");
+				}),
+			).toThrow("boom");
+			expect(getContext("theme")).toBeUndefined();
+		});
+	});
+});
+
 describe("pushLayer / popLayer", () => {
 	it("throws when called outside a draw pass", () => {
 		expect(() => pushLayer("modal")).toThrow("[ism]");
@@ -160,6 +202,21 @@ describe("pushLayer / popLayer", () => {
 			pushLayer("tooltip");
 			popLayer();
 
+			expect(runtime.getActiveLayer()).toBe("default");
+		});
+	});
+});
+
+describe("withLayer", () => {
+	it("restores the layer after success and failure", () => {
+		drawPass(() => {
+			expect(withLayer("modal", () => runtime.getActiveLayer())).toBe("modal");
+			expect(runtime.getActiveLayer()).toBe("default");
+			expect(() =>
+				withLayer("tooltip", () => {
+					throw new Error("boom");
+				}),
+			).toThrow("boom");
 			expect(runtime.getActiveLayer()).toBe("default");
 		});
 	});
@@ -261,16 +318,16 @@ describe("setFocus / isFocused", () => {
 		otherRuntime.unregisterApp();
 	});
 
-	it("broadcasts to every mounted runtime for an unowned ID", () => {
+	it("does not broadcast an unowned ID across unrelated runtimes", () => {
 		const otherRuntime = new Runtime();
 		otherRuntime.registerApp(() => {});
 
 		setActiveRuntime(null);
 		setFocus("not-yet-drawn");
 
-		expect(runtime.isFocused("not-yet-drawn")).toBe(true);
-		expect(otherRuntime.isFocused("not-yet-drawn")).toBe(true);
-		expect(isFocused("not-yet-drawn")).toBe(true);
+		expect(runtime.isFocused("not-yet-drawn")).toBe(false);
+		expect(otherRuntime.isFocused("not-yet-drawn")).toBe(false);
+		expect(isFocused("not-yet-drawn")).toBe(false);
 
 		otherRuntime.unregisterApp();
 	});

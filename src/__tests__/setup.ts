@@ -1,5 +1,4 @@
-import { afterEach } from "vitest";
-import { mountedRuntimes } from "../runtime";
+export {};
 
 declare global {
 	// React uses this flag to check whether act can flush updates correctly.
@@ -12,8 +11,3 @@ declare global {
 }
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-
-afterEach(() => {
-	// Clear mounted runtimes after each test to prevent state leaks.
-	mountedRuntimes.clear();
-});

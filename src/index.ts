@@ -8,67 +8,79 @@
  *
  * ## Quick start
  *
- * ```ts
- * import {
- *   createApp,
- *   defineWidget,
- *   makeInteractive,
- *   markDirty,
- * } from "@ispoofermotion/core";
+ * ```tsx
+ * import { createApp, defineWidget } from "@ispoofermotion/core";
  * import "@ispoofermotion/core/styles.css";
+ * import { createElement } from "react";
  *
- * const Button = defineWidget<
- *   { clicked: boolean },
- *   [label: string],
- *   boolean
- * >({
- *   name: "Button",
- *   defaultState: { clicked: false },
- *   a11y: { role: "button", label: ([label]) => label },
- *   render: ({ id, args, setState, widgetProps }) =>
+ * const Counter = defineWidget<number, [label: string], void>({
+ *   name: "Counter",
+ *   defaultState: 0,
+ *   render: ({ state, args, setState, widgetProps }) =>
  *     createElement(
  *       "button",
  *       {
- *         key: id,
+ *         type: "button",
  *         ...widgetProps,
- *         ...makeInteractive(() => setState({ clicked: true })),
+ *         onClick: () => setState((value) => value + 1),
  *       },
- *       args[0],
+ *       `${args[0]}: ${state}`,
  *     ),
- *   getReturnValue: (state) => state.clicked,
- *   consumeState: (state) => ({ ...state, clicked: false }),
+ *   getReturnValue: () => undefined,
  * });
  *
- * let count = 0;
+ * function draw() {
+ *   Counter("Count");
+ * }
  *
- * const App = createApp(() => {
- *   if (Button("Increment")) {
- *     count += 1;
- *     markDirty();
- *   }
- * });
+ * const App = createApp(draw);
  * ```
+ *
+ * Keep irreversible external side effects out of the draw pass. Runtime-owned
+ * speculative state is committed only after React commits the frame.
  *
  * Public API stability is documented in `STABILITY.md`.
  *
  * @since 1.0.0
  */
 
-export type { IsmConfig } from "./config";
+export type { IsmConfig, LayerMode } from "./config";
 export {
+	DEFAULT_LAYER_MODE,
 	DEFAULT_LAYER_Z_INDEX,
 	DEFAULT_SHOW_DEV_TOOLS,
+	DEFAULT_STATE_RETENTION_FRAMES,
+	DEFAULT_STRICT_IDS,
+	DEFAULT_STRICT_RUNTIME,
 	defineConfig,
 } from "./config";
-export type { AppOptions } from "./createApp";
+export type { AppHandle, AppOptions, IsmApp } from "./createApp";
 export { createApp, useReactContext } from "./createApp";
-export { DevTools } from "./DevTools";
 export { defineWidget } from "./defineWidget";
-export { ISMCoreErrorBoundary, ISMLibErrorBoundary } from "./ErrorBoundary";
+export type {
+	ErrorFallbackContext,
+	ErrorFallbackProps,
+	ISMCoreErrorBoundaryProps,
+} from "./ErrorBoundary";
+export {
+	ErrorFallback,
+	ISMCoreErrorBoundary,
+	ISMLibErrorBoundary,
+} from "./ErrorBoundary";
+export type {
+	DiagnosticLevel,
+	DiagnosticSink,
+	ISMDiagnostic,
+	ISMErrorCode,
+} from "./errors";
+export { ISMError } from "./errors";
 export { makeInteractive } from "./makeInteractive";
 export { extractDisplayLabel } from "./runtime";
 export type {
+	PersistentStateOptions,
 	StorageAdapter,
+	StorageFailure,
+	StorageOperation,
 	WidgetA11y,
 	WidgetConfig,
 	WidgetProps,
@@ -98,7 +110,10 @@ export function pushId(id: string): void {
 	const runtime = getActiveRuntime();
 
 	if (!runtime.isDrawing()) {
-		throw new Error(errors.idStackOutsideDraw("pushId"));
+		throw errors.createISMError(
+			"ISM_ID_STACK_OUTSIDE_DRAW",
+			errors.idStackOutsideDraw("pushId"),
+		);
 	}
 
 	runtime.pushIdSegment(id);
@@ -113,10 +128,23 @@ export function popId(): void {
 	const runtime = getActiveRuntime();
 
 	if (!runtime.isDrawing()) {
-		throw new Error(errors.idStackOutsideDraw("popId"));
+		throw errors.createISMError(
+			"ISM_ID_STACK_OUTSIDE_DRAW",
+			errors.idStackOutsideDraw("popId"),
+		);
 	}
 
 	runtime.popIdSegment();
+}
+
+/** Run a draw closure under one stable ID segment and always restore the stack. */
+export function withId<T>(id: string, drawClosure: () => T): T {
+	pushId(id);
+	try {
+		return drawClosure();
+	} finally {
+		popId();
+	}
 }
 
 /**
@@ -128,7 +156,10 @@ export function pushContext<T>(key: string, value: T): void {
 	const runtime = getActiveRuntime();
 
 	if (!runtime.isDrawing()) {
-		throw new Error(errors.idStackOutsideDraw("pushContext"));
+		throw errors.createISMError(
+			"ISM_ID_STACK_OUTSIDE_DRAW",
+			errors.idStackOutsideDraw("pushContext"),
+		);
 	}
 
 	runtime.pushContext(key, value);
@@ -143,7 +174,10 @@ export function popContext(key: string): void {
 	const runtime = getActiveRuntime();
 
 	if (!runtime.isDrawing()) {
-		throw new Error(errors.idStackOutsideDraw("popContext"));
+		throw errors.createISMError(
+			"ISM_ID_STACK_OUTSIDE_DRAW",
+			errors.idStackOutsideDraw("popContext"),
+		);
 	}
 
 	runtime.popContext(key);
@@ -158,10 +192,27 @@ export function getContext<T>(key: string): T | undefined {
 	const runtime = getActiveRuntime();
 
 	if (!runtime.isDrawing()) {
-		throw new Error(errors.idStackOutsideDraw("getContext"));
+		throw errors.createISMError(
+			"ISM_ID_STACK_OUTSIDE_DRAW",
+			errors.idStackOutsideDraw("getContext"),
+		);
 	}
 
 	return runtime.getContext<T>(key);
+}
+
+/** Run a draw closure with one context value and always restore the stack. */
+export function withContext<T, R>(
+	key: string,
+	value: T,
+	drawClosure: () => R,
+): R {
+	pushContext(key, value);
+	try {
+		return drawClosure();
+	} finally {
+		popContext(key);
+	}
 }
 
 /**
@@ -173,7 +224,10 @@ export function pushLayer(layerName: string): void {
 	const runtime = getActiveRuntime();
 
 	if (!runtime.isDrawing()) {
-		throw new Error(errors.idStackOutsideDraw("pushLayer"));
+		throw errors.createISMError(
+			"ISM_ID_STACK_OUTSIDE_DRAW",
+			errors.idStackOutsideDraw("pushLayer"),
+		);
 	}
 
 	runtime.pushLayer(layerName);
@@ -188,10 +242,23 @@ export function popLayer(): void {
 	const runtime = getActiveRuntime();
 
 	if (!runtime.isDrawing()) {
-		throw new Error(errors.idStackOutsideDraw("popLayer"));
+		throw errors.createISMError(
+			"ISM_ID_STACK_OUTSIDE_DRAW",
+			errors.idStackOutsideDraw("popLayer"),
+		);
 	}
 
 	runtime.popLayer();
+}
+
+/** Run a draw closure in one named layer and always restore the layer stack. */
+export function withLayer<T>(layerName: string, drawClosure: () => T): T {
+	pushLayer(layerName);
+	try {
+		return drawClosure();
+	} finally {
+		popLayer();
+	}
 }
 
 function shallowEqual(a: readonly unknown[], b: readonly unknown[]): boolean {
@@ -228,7 +295,10 @@ export function memoBlock(
 	const runtime = getActiveRuntime();
 
 	if (!runtime.isDrawing()) {
-		throw new Error(errors.idStackOutsideDraw("memoBlock"));
+		throw errors.createISMError(
+			"ISM_ID_STACK_OUTSIDE_DRAW",
+			errors.idStackOutsideDraw("memoBlock"),
+		);
 	}
 
 	const identity = runtime.buildMemoIdentity(id);
@@ -278,8 +348,8 @@ export function setFocus(id: string | null): void {
 		return;
 	}
 
-	for (const runtime of mountedRuntimes) {
-		runtime.setFocus(id);
+	if (id === null) {
+		for (const runtime of mountedRuntimes) runtime.setFocus(null);
 	}
 }
 
@@ -329,7 +399,10 @@ export function end(): void {
 	const runtime = getActiveRuntime();
 
 	if (!runtime.isDrawing()) {
-		throw new Error(errors.endOutsideDraw());
+		throw errors.createISMError(
+			"ISM_END_OUTSIDE_DRAW",
+			errors.endOutsideDraw(),
+		);
 	}
 
 	runtime.popScope();
@@ -338,8 +411,8 @@ export function end(): void {
 /**
  * Ask every mounted runtime to draw another frame.
  *
- * Use this after external state changes outside a widget `setState` call.
- * Multiple calls in the same task are batched by each runtime.
+ * Prefer the app-local `App.markDirty()` handle returned by {@link createApp}.
+ * This global compatibility helper intentionally broadcasts to every mounted app.
  *
  * @since 1.0.0
  */

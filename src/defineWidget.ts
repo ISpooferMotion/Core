@@ -1,6 +1,7 @@
 import * as errors from "./errors";
 import { extractDisplayLabel, getActiveRuntime } from "./runtime";
 import type {
+	ResolvedPersistenceOptions,
 	WidgetA11y,
 	WidgetConfig,
 	WidgetProps,
@@ -9,32 +10,37 @@ import type {
 
 // Widget name rules
 
-const INVALID_NAME_CHARS = /[/#\s]/;
+const VALID_WIDGET_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 function validateWidgetName(name: string): void {
-	if (!name || name.length === 0) {
-		throw new Error(errors.invalidWidgetName(name, "Name is empty."));
-	}
-	if (INVALID_NAME_CHARS.test(name)) {
-		throw new Error(
+	if (!VALID_WIDGET_NAME.test(name)) {
+		throw errors.createISMError(
+			"ISM_INVALID_WIDGET_NAME",
 			errors.invalidWidgetName(
 				name,
-				"Name contains a reserved character ('/', '#', or whitespace).",
+				"Name must start with an ASCII letter and contain only letters, digits, underscores, or hyphens.",
 			),
+			{ details: { name } },
 		);
 	}
 }
 
 function validateDefaultState<S>(name: string, defaultState: S): void {
 	if (typeof defaultState === "function") {
-		throw new Error(errors.invalidDefaultState(name));
+		throw errors.createISMError(
+			"ISM_INVALID_DEFAULT_STATE",
+			errors.invalidDefaultState(name),
+			{ details: { name } },
+		);
 	}
 	try {
 		assertStructuredState(defaultState);
 		structuredClone(defaultState);
 	} catch (err) {
-		throw new Error(
+		throw errors.createISMError(
+			"ISM_DEFAULT_STATE_NOT_CLONEABLE",
 			errors.defaultStateNotCloneable(name, errors.getErrorMessage(err)),
+			{ cause: err, details: { name } },
 		);
 	}
 }
@@ -81,6 +87,56 @@ function assertStructuredState(
 	}
 }
 
+function resolvePersistenceOptions<S, A extends unknown[], R>(
+	config: WidgetConfig<S, A, R>,
+): ResolvedPersistenceOptions | null {
+	const hasPersistenceHooks =
+		config.storageVersion !== undefined ||
+		config.validateStoredState !== undefined ||
+		config.migrateStoredState !== undefined ||
+		config.serialize !== undefined ||
+		config.deserialize !== undefined;
+
+	if (!config.persistent) {
+		if (hasPersistenceHooks) {
+			throw new Error(
+				`[ism] Widget "${config.name}" configures persistence hooks but persistent is not true.`,
+			);
+		}
+		return null;
+	}
+
+	const storageVersion = config.storageVersion ?? 1;
+	if (!Number.isSafeInteger(storageVersion) || storageVersion < 1) {
+		throw new Error(
+			`[ism] Widget "${config.name}" storageVersion must be a positive safe integer.`,
+		);
+	}
+
+	return {
+		storageVersion,
+		...(config.validateStoredState
+			? {
+					validateStoredState: (value: unknown) =>
+						config.validateStoredState?.(value) ?? false,
+				}
+			: {}),
+		...(config.migrateStoredState
+			? {
+					migrateStoredState: (
+						value: unknown,
+						fromVersion: number,
+						toVersion: number,
+					) => config.migrateStoredState?.(value, fromVersion, toVersion),
+				}
+			: {}),
+		...(config.serialize
+			? { serialize: (state: unknown) => config.serialize?.(state as S) }
+			: {}),
+		...(config.deserialize ? { deserialize: config.deserialize } : {}),
+	};
+}
+
 // Shared widget props
 
 function populateWidgetProps<A extends unknown[]>(
@@ -91,10 +147,16 @@ function populateWidgetProps<A extends unknown[]>(
 	a11y: WidgetA11y<A> | undefined,
 	args: A,
 	descriptionId: string | undefined,
+	inNamedLayer: boolean,
 ): void {
 	props["data-ism-widget"] = widgetName;
 	props["data-ism-id"] = id;
 	props.className = `ism-widget ism-${slug}`;
+	if (inNamedLayer) {
+		props.style = { pointerEvents: "auto" };
+	} else {
+		delete props.style;
+	}
 
 	if (a11y?.role) {
 		props.role = a11y.role;
@@ -143,6 +205,7 @@ function populateWidgetProps<A extends unknown[]>(
  *       "button",
  *       {
  *         key: id,
+ *         type: "button",
  *         ...widgetProps,
  *         onClick: () => setState({ clicked: true }),
  *       },
@@ -168,6 +231,7 @@ export function defineWidget<S, A extends unknown[], R>(
 
 	validateWidgetName(name);
 	validateDefaultState(name, defaultState);
+	const persistence = resolvePersistenceOptions(config);
 
 	const getLabel: (...args: A) => string | undefined =
 		config.getLabel ??
@@ -211,26 +275,24 @@ export function defineWidget<S, A extends unknown[], R>(
 
 		if (!runtime.isDrawing()) {
 			const label = getLabel(...args);
-			throw new Error(errors.widgetOutsideDraw(name, label));
+			throw errors.createISMError(
+				"ISM_WIDGET_OUTSIDE_DRAW",
+				errors.widgetOutsideDraw(name, label),
+				{ details: { name, ...(label === undefined ? {} : { label }) } },
+			);
 		}
 
 		const label = getLabel(...args);
 		const id = runtime.buildId(name, label);
 
-		const state = runtime.getState<S>(
-			id,
-			defaultState,
-			config.persistent ?? false,
-		);
+		const state = runtime.getState<S>(id, defaultState, persistence ?? false);
 
 		const entry = runtime.acquireFrameEntry();
 		entry.id = id;
 		entry.widgetName = name;
 		entry.args = args as unknown[];
-		entry.scoped = scoped;
-		entry.defaultState = defaultState;
 		entry.renderState = state;
-		entry.persistent = config.persistent ?? false;
+		entry.persistence = persistence;
 
 		const descriptionId = a11y?.description
 			? runtime.getDomId("description", id)
@@ -244,6 +306,7 @@ export function defineWidget<S, A extends unknown[], R>(
 			a11y,
 			args,
 			descriptionId,
+			runtime.getActiveLayer() !== "default",
 		);
 
 		entry.renderFn = renderFn;
@@ -264,12 +327,7 @@ export function defineWidget<S, A extends unknown[], R>(
 		const returnValue = getReturnValue(state, ...args);
 
 		if (consumeStateFn) {
-			runtime.consumeState(
-				id,
-				state,
-				consumeStateFn,
-				config.persistent ?? false,
-			);
+			runtime.consumeState(id, state, consumeStateFn, persistence ?? false);
 		}
 
 		return returnValue;

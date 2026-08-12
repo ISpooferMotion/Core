@@ -1,10 +1,28 @@
 import type { CSSProperties, ErrorInfo, ReactNode } from "react";
 import { Component, createElement } from "react";
+import * as errors from "./errors";
 
-interface Props {
+/** Context passed to a custom application error fallback. */
+export interface ErrorFallbackContext {
+	title: string;
+	error: Error;
+	info?: ErrorInfo;
+	kind: "render" | "draw";
+	errorCode: errors.ISMErrorCode;
+	showErrorDetails: boolean;
+	onRetry?: () => void;
+}
+
+export interface ISMCoreErrorBoundaryProps {
 	children: ReactNode;
 	/** Called after the boundary catches a render error. */
 	onError?: (error: Error, info: ErrorInfo) => void;
+	/** Render a consumer-defined replacement instead of the built-in fallback. */
+	renderFallback?: (context: ErrorFallbackContext) => ReactNode;
+	/** Include message/stack/component details in the built-in fallback. */
+	showErrorDetails?: boolean;
+	/** Receive the structured render failure diagnostic. */
+	onDiagnostic?: errors.DiagnosticSink;
 }
 
 interface State {
@@ -12,26 +30,12 @@ interface State {
 	info: ErrorInfo | null;
 }
 
-/**
- * React error boundary used by `@ispoofermotion/core` apps.
- *
- * It catches errors thrown while React renders widgets and replaces the broken
- * tree with {@link ErrorFallback}. `createApp` adds this boundary automatically,
- * but it can also wrap a smaller part of an app.
- *
- * @since 1.0.0
- *
- * @example
- * ```tsx
- * createRoot(root).render(
- *   createElement(
- *     ISMCoreErrorBoundary,
- *     { onError: (error) => reportError(error) },
- *     createElement(App),
- *   ),
- * );
- * ```
- */
+/** Default detailed-error policy: enabled outside production. */
+export function shouldShowErrorDetailsByDefault(): boolean {
+	return (
+		typeof process === "undefined" || process.env.NODE_ENV !== "production"
+	);
+}
 
 /** Shared styles for {@link ErrorFallback}. */
 const fallbackStyles = {
@@ -80,6 +84,12 @@ const fallbackStyles = {
 		color: "#ffc9c9",
 		whiteSpace: "pre-wrap",
 		wordBreak: "break-word",
+	},
+	errorId: {
+		fontFamily: "monospace",
+		fontSize: "12px",
+		color: "#adb5bd",
+		marginBottom: "12px",
 	},
 	tipsSection: { marginBottom: "16px" },
 	tipsHeading: {
@@ -133,33 +143,43 @@ const fallbackStyles = {
 	},
 } satisfies Record<string, CSSProperties>;
 
-/**
- * Render the error panel used for draw and widget render failures.
- *
- * @since 3.2.0
- */
-export function ErrorFallback({
-	title,
-	error,
-	info,
-	kind = "render",
-	onRetry,
-}: {
+export interface ErrorFallbackProps {
 	title: string;
 	error: Error | string;
 	info?: ErrorInfo;
 	/** Select the tips shown for this error source. */
 	kind?: "render" | "draw";
+	/** Stable code displayed even when sensitive details are hidden. */
+	errorCode?: errors.ISMErrorCode;
+	/** Hide messages/stacks in production-safe mode. */
+	showErrorDetails?: boolean;
 	/** Show a retry button when a recovery callback is available. */
 	onRetry?: () => void;
-}): ReactNode {
-	const errorMessage = error instanceof Error ? error.message : String(error);
-	const stackTrace = error instanceof Error ? error.stack : undefined;
+}
+
+/** Render the error panel used for draw and widget render failures. */
+export function ErrorFallback({
+	title,
+	error,
+	info,
+	kind = "render",
+	errorCode = kind === "draw" ? "ISM_DRAW_ERROR" : "ISM_WIDGET_RENDER_ERROR",
+	showErrorDetails = shouldShowErrorDetailsByDefault(),
+	onRetry,
+}: ErrorFallbackProps): ReactNode {
+	const originalMessage =
+		error instanceof Error ? error.message : String(error);
+	const errorMessage = showErrorDetails
+		? originalMessage
+		: "Something went wrong.";
+	const stackTrace =
+		showErrorDetails && error instanceof Error ? error.stack : undefined;
 
 	return createElement(
 		"div",
 		{
 			"data-ism-error": "",
+			"data-ism-error-code": errorCode,
 			role: "alert",
 			style: fallbackStyles.container,
 		},
@@ -193,39 +213,46 @@ export function ErrorFallback({
 		),
 		createElement(
 			"div",
-			{ style: fallbackStyles.tipsSection },
-			createElement(
-				"strong",
-				{ style: fallbackStyles.tipsHeading },
-				"How to fix:",
-			),
-			createElement(
-				"ul",
-				{ style: fallbackStyles.tipsList },
-				createElement(
-					"li",
-					null,
-					"Check the stack trace below to identify the exact file and line number causing the issue.",
-				),
-				kind === "render"
-					? createElement(
-							"li",
-							null,
-							"Ensure your widget render functions return valid React elements and don't throw synchronous errors.",
-						)
-					: createElement(
-							"li",
-							null,
-							"Ensure your draw loop does not have syntax errors or reference undefined variables.",
-						),
-				createElement(
-					"li",
-					null,
-					"Look for any mismatched pushId/popId or pushLayer/popLayer calls.",
-				),
-			),
+			{ style: fallbackStyles.errorId },
+			`Error ID: ${errorCode}`,
 		),
-		stackTrace || info?.componentStack
+		showErrorDetails
+			? createElement(
+					"div",
+					{ style: fallbackStyles.tipsSection },
+					createElement(
+						"strong",
+						{ style: fallbackStyles.tipsHeading },
+						"How to fix:",
+					),
+					createElement(
+						"ul",
+						{ style: fallbackStyles.tipsList },
+						createElement(
+							"li",
+							null,
+							"Check the stack trace below to identify the exact file and line number causing the issue.",
+						),
+						kind === "render"
+							? createElement(
+									"li",
+									null,
+									"Ensure your widget render functions return valid React elements and don't throw synchronous errors.",
+								)
+							: createElement(
+									"li",
+									null,
+									"Check for exceptions, invalid state, or undefined values in the draw function.",
+								),
+						createElement(
+							"li",
+							null,
+							"Look for mismatched pushId/popId or pushLayer/popLayer calls.",
+						),
+					),
+				)
+			: null,
+		showErrorDetails && (stackTrace || info?.componentStack)
 			? createElement(
 					"div",
 					{ style: fallbackStyles.stackSection },
@@ -262,7 +289,11 @@ export function ErrorFallback({
 	);
 }
 
-export class ISMCoreErrorBoundary extends Component<Props, State> {
+/** React error boundary used by `@ispoofermotion/core` apps. */
+export class ISMCoreErrorBoundary extends Component<
+	ISMCoreErrorBoundaryProps,
+	State
+> {
 	state: State = { error: null, info: null };
 
 	static getDerivedStateFromError(error: Error): Pick<State, "error"> {
@@ -272,26 +303,42 @@ export class ISMCoreErrorBoundary extends Component<Props, State> {
 	componentDidCatch = (error: Error, info: ErrorInfo): void => {
 		this.setState({ info });
 		this.props.onError?.(error, info);
-		console.error("[ism] Uncaught error in widget render:", error, info);
+		errors.emitDiagnostic(
+			this.props.onDiagnostic,
+			errors.createDiagnostic(
+				"ISM_WIDGET_RENDER_ERROR",
+				"error",
+				"[ism] Uncaught error in widget render.",
+				{
+					cause: error,
+					details: { componentStack: info.componentStack },
+				},
+			),
+		);
 	};
 
-	/**
-	 * Clear the saved error so React can try rendering the children again.
-	 * This is an instance field so it can be passed as a callback directly.
-	 */
 	private resetError = (): void => {
 		this.setState({ error: null, info: null });
 	};
 
 	render(): ReactNode {
 		if (this.state.error) {
-			return createElement(ErrorFallback, {
+			const context: ErrorFallbackContext = {
 				title: "Widget render error",
 				error: this.state.error,
 				...(this.state.info ? { info: this.state.info } : {}),
 				kind: "render",
+				errorCode: errors.getErrorCode(
+					this.state.error,
+					"ISM_WIDGET_RENDER_ERROR",
+				),
+				showErrorDetails:
+					this.props.showErrorDetails ?? shouldShowErrorDetailsByDefault(),
 				onRetry: this.resetError,
-			});
+			};
+			return this.props.renderFallback
+				? this.props.renderFallback(context)
+				: createElement(ErrorFallback, context);
 		}
 		return this.props.children;
 	}

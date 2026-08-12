@@ -104,6 +104,24 @@ describe("defineWidget name validation", () => {
 		).not.toThrow();
 	});
 
+	it.each([
+		"Widget.Name",
+		"Widget:Name",
+		"Widget[Name]",
+		'Widget"Name',
+		"💥Widget",
+		"1Widget",
+	])("rejects CSS-unsafe widget name %s", (name: string) => {
+		expect(() =>
+			defineWidget({
+				name,
+				defaultState: {},
+				render: () => null,
+				getReturnValue: () => undefined,
+			}),
+		).toThrow("^[A-Za-z]");
+	});
+
 	it("accepts a valid name", () => {
 		expect(() =>
 			defineWidget({
@@ -113,6 +131,31 @@ describe("defineWidget name validation", () => {
 				getReturnValue: () => undefined,
 			}),
 		).not.toThrow();
+	});
+
+	it("rejects persistence hooks unless persistent is enabled", () => {
+		expect(() =>
+			defineWidget({
+				name: "PersistenceHooksNeedPersistence",
+				defaultState: { value: 0 },
+				storageVersion: 2,
+				render: () => null,
+				getReturnValue: () => undefined,
+			}),
+		).toThrow("persistent is not true");
+	});
+
+	it("rejects invalid persistent storage versions", () => {
+		expect(() =>
+			defineWidget({
+				name: "InvalidStorageVersion",
+				defaultState: { value: 0 },
+				persistent: true,
+				storageVersion: 0,
+				render: () => null,
+				getReturnValue: () => undefined,
+			}),
+		).toThrow("positive safe integer");
 	});
 });
 
@@ -163,12 +206,10 @@ describe("conditional widgets", () => {
 		const val = Counter();
 		runtime.endFrame();
 
-		vi.advanceTimersByTime(1500);
-
 		runtime.beginFrame();
 		runtime.endFrame();
 
-		// One missing frame is shorter than the state cleanup timeout.
+		// One missing frame is within the default generation retention.
 		expect(val).toBe(42);
 	});
 
@@ -315,6 +356,28 @@ describe("widgetProps", () => {
 			"data-ism-widget": "TestWidget",
 			className: expect.stringContaining("ism-testwidget"),
 		});
+	});
+
+	it("injects pointer-event recovery only for named-layer widget roots", () => {
+		runtime.registerApp(() => {});
+		const W = defineWidget<{}, [label: string], void>({
+			name: "LayerWidget",
+			defaultState: {},
+			render: () => null,
+			getReturnValue: () => undefined,
+		});
+
+		runtime.beginFrame();
+		W("default");
+		runtime.pushLayer("modal");
+		W("modal");
+		runtime.popLayer();
+		runtime.endFrame();
+
+		const defaultEntry = runtime.getFrameBuffer().get("default")?.[0];
+		const modalEntry = runtime.getFrameBuffer().get("modal")?.[0];
+		expect(defaultEntry?.widgetProps.style).toBeUndefined();
+		expect(modalEntry?.widgetProps.style).toEqual({ pointerEvents: "auto" });
 	});
 
 	it("injects ARIA role and label from a11y config", () => {

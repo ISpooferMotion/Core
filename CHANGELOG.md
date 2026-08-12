@@ -1,10 +1,43 @@
-<!-- markdownlint-disable MD013 MD024 -->
 # Changelog
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [4.0.0] - 2026-08-12
+
+### Added
+
+- TypeDoc now validates unresolved links for both the main and `devtools` entry points without writing over maintained source documentation.
+- Deterministic generation-based state/memo retention with configurable `stateRetentionFrames`.
+- Runtime scaling benchmarks for 500/1,000/5,000/10,000 widgets, 10k cleanup, and cached-subtree hits.
+- Reviewable core/CLI/DevTools bundle-size and gzip regression budgets enforced in CI and release validation.
+- Packed-artifact validation with pinned `publint` and `@arethetypeswrong/cli`, plus clean Node ESM/TypeScript, Node CJS, Vite/React 18, and Vite/React 19 consumer fixtures.
+- Reproducible clean-build verification that requires byte-identical packed tarballs, plus SHA-256 metadata for release artifacts.
+- Dependency-review and CodeQL security workflows, plus SPDX SBOM generation for GitHub releases.
+- Stable `ISM_*` diagnostic/error codes, `ISMError`, the `onDiagnostic` sink, and `strictRuntime` invariant enforcement.
+- `createApp` error hooks for `onError`, `renderErrorFallback`, and production-safe `showErrorDetails`.
+- A dedicated `@ispoofermotion/core/devtools` subpath with bounded inspector serialization and a versioned read-only `Symbol.for("@ispoofermotion/core/devtools/v1")` protocol.
+
+### Changed
+
+- Public package metadata now bounds React/React DOM support to the tested `>=18 <20` majors and describes Tauri as a design target rather than a runtime dependency.
+- The flagship quick-start examples no longer teach irreversible external mutation during the React draw phase.
+- TypeDoc output moved to `.typedoc`.
+- The dead Markdownlint configuration was removed; documentation verification now uses TypeDoc link validation plus a repository-local relative-link checker.
+- Historical `npx ism-core init` / `bunx ism-core init` references are superseded by package-qualified invocation: `npx --package @ispoofermotion/core ism-core init` or `bunx --package @ispoofermotion/core ism-core init`.
+- Historical global DevTools-hook, fixed-250ms inspector-throttle, `Runtime#registerExternalId`, and `Date.now()` GC notes describe their original releases only; the current contracts are the versioned `@ispoofermotion/core/devtools` protocol, bounded revision-based inspection, app-local/generated identity ownership, and generation-based retention.
+- Frame recording now reuses double-buffered frame roots/pools without mutating the committed tree during speculative renders.
+- Tree inspection fingerprints are lazy outside an active inspector, and deep runtime tree bookkeeping now uses iterative traversals.
+- Removed unused per-widget `FrameEntry` fields from the hot recording path.
+- Releases are version-driven and globally serialized, publish the exact validated tarball on Node 24, and authenticate to npm through OIDC instead of `NPM_TOKEN`.
+- Release-note extraction now requires an exact non-empty changelog version section, and npm registry errors are distinguished from a genuine missing-version 404.
+- Build post-processing now runs as an explicit deterministic step instead of a `tsup` configuration callback.
+- Built-in DevTools now load lazily instead of being statically pulled into the normal core entry.
+- DevTools state/tree inspection is cycle-safe and resource-bounded; this supersedes the older implementation notes about a fixed 250ms serialization throttle.
+- The previously documented internal `Runtime#registerExternalId` hook is no longer part of the current runtime architecture; app-local ownership and generated DOM IDs now provide the supported identity/focus model.
+- Production error fallbacks hide exception messages and stacks by default and show a stable error ID instead.
 
 ## [3.3.2] - 2026-08-08
 

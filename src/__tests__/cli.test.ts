@@ -76,7 +76,10 @@ describe("runCli", () => {
 			"https://unpkg.com/@ispoofermotion/core@3.3.0/schema.json",
 		);
 		expect(parsed.layerZIndex).toBe(100);
+		expect(parsed.layerMode).toBe("root");
 		expect(parsed.showDevTools).toBe(false);
+		expect(parsed.strictIds).toBe(false);
+		expect(parsed.strictRuntime).toBe(false);
 		logSpy.mockRestore();
 	});
 

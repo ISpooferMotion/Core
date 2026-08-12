@@ -1,5 +1,12 @@
 import * as errors from "./errors";
-import type { FrameEntry, StorageAdapter } from "./types";
+import type {
+	FrameEntry,
+	PersistentStateOptions,
+	ResolvedPersistenceOptions,
+	StorageAdapter,
+	StorageFailure,
+	StorageOperation,
+} from "./types";
 
 interface ScopeEntry {
 	id: string;
@@ -13,6 +20,71 @@ interface MemoCacheEntry {
 	subtree: FrameEntry[];
 	widgetIds: string[];
 }
+
+interface FrameTransactionSnapshot {
+	frameRoot: Map<string, FrameEntry[]>;
+	stateStore: Map<string, unknown>;
+	stateDefaults: Map<string, unknown>;
+	persistenceById: Map<string, ResolvedPersistenceOptions>;
+	contextStack: Map<string, unknown[]>;
+	memoCache: Map<string, MemoCacheEntry>;
+	memoKeysByWidgetId: Map<string, Set<string>>;
+	memoLastSeenFrame: Map<string, number>;
+	memoCollisionCounter: Map<string, number>;
+	idPrefixStack: string[];
+	idPrefix: string;
+	collisionCounter: Map<string, number>;
+	usedFinalIds: Set<string>;
+	duplicateWarned: Set<string>;
+	activeLayerStack: string[];
+	focusedId: string | null;
+	ownedIds: Set<string>;
+	stateLastSeenFrame: Map<string, number>;
+	frameGeneration: number;
+	treeMutationEpoch: number;
+	lastInspectedTreeEpoch: number;
+	scopeStack: ScopeEntry[];
+	dirty: boolean;
+	treeRevision: number;
+	stateRevision: number;
+	lastTreeFingerprint: string;
+}
+
+interface PendingStorageSet {
+	kind: "set";
+	value: unknown;
+	persistence: ResolvedPersistenceOptions;
+}
+
+interface PendingStorageDelete {
+	kind: "delete";
+}
+
+type PendingStorageMutation = PendingStorageSet | PendingStorageDelete;
+
+interface FrameTransaction {
+	id: number;
+	snapshot: FrameTransactionSnapshot;
+	pendingStorageMutations: Map<string, PendingStorageMutation>;
+	prepared: boolean;
+}
+
+interface PersistedStateRecord {
+	__ismState: 1;
+	version: number;
+	value: unknown;
+}
+
+type PersistenceRequest<S> =
+	| boolean
+	| PersistentStateOptions<S>
+	| ResolvedPersistenceOptions;
+
+type StorageReadResult<S> =
+	| { status: "found"; value: S; normalize: boolean }
+	| { status: "missing" }
+	| { status: "invalid" }
+	| { status: "unavailable" };
 
 export interface MemoIdentity {
 	cacheKey: string;
@@ -86,7 +158,49 @@ function restoreSet<T>(target: Set<T>, source: Set<T>): void {
 	for (const value of source) target.add(value);
 }
 
-let nextRuntimeInstanceId = 1;
+const RUNTIME_REGISTRY_SYMBOL = Symbol.for(
+	"@ispoofermotion/core/runtime-registry",
+);
+
+interface RuntimeRegistry {
+	nextInstanceId: number;
+}
+
+function getRuntimeRegistry(): RuntimeRegistry {
+	const globalRecord = globalThis as typeof globalThis &
+		Record<PropertyKey, unknown>;
+	const existing = globalRecord[RUNTIME_REGISTRY_SYMBOL] as
+		| RuntimeRegistry
+		| undefined;
+	if (existing) return existing;
+	const registry: RuntimeRegistry = { nextInstanceId: 1 };
+	globalRecord[RUNTIME_REGISTRY_SYMBOL] = registry;
+	return registry;
+}
+
+function allocateRuntimeInstanceId(): string {
+	const registry = getRuntimeRegistry();
+	const id = registry.nextInstanceId++;
+	return `ism-runtime-v4-${id}`;
+}
+
+function hashDomIdValue(value: string): string {
+	let first = 0x811c9dc5;
+	let second = 0x9e3779b9;
+	for (let index = 0; index < value.length; index++) {
+		const code = value.charCodeAt(index);
+		first = Math.imul(first ^ code, 0x01000193);
+		second = Math.imul(second ^ code, 0x85ebca6b);
+	}
+	return `${(first >>> 0).toString(36)}${(second >>> 0).toString(36)}`;
+}
+
+function sanitizeDomToken(value: string): string {
+	const sanitized = value
+		.replace(/[^A-Za-z0-9_-]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return sanitized || "node";
+}
 
 class FramePool {
 	private pool: FrameEntry[] = [];
@@ -100,17 +214,19 @@ class FramePool {
 		if (this.pool.length > maxRetained) this.pool.length = maxRetained;
 	}
 
+	get usedCount(): number {
+		return this.index;
+	}
+
 	acquire(): FrameEntry {
 		if (this.index >= this.pool.length) {
 			this.pool.push({
 				id: "",
 				widgetName: "",
 				args: [],
-				scoped: false,
 				children: [],
-				defaultState: null,
 				renderState: null,
-				persistent: false,
+				persistence: null,
 				widgetProps: {
 					"data-ism-widget": "",
 					"data-ism-id": "",
@@ -130,12 +246,19 @@ class FramePool {
 /** Runtime state for one component returned by `createApp`. */
 export class Runtime {
 	private readonly storage: StorageAdapter | null;
+	private readonly storageNamespace: string | null;
+	private readonly storagePrefix: string | null;
+	private readonly onStorageError: ((failure: StorageFailure) => void) | null;
+	private readonly strictIds: boolean;
+	private readonly strictRuntime: boolean;
+	private readonly onDiagnostic: errors.DiagnosticSink | null;
 	private stateStore = new Map<string, unknown>();
+	private stateDefaults = new Map<string, unknown>();
+	private persistenceById = new Map<string, ResolvedPersistenceOptions>();
 	private contextStack = new Map<string, unknown[]>();
 	private memoCache = new Map<string, MemoCacheEntry>();
 	private memoKeysByWidgetId = new Map<string, Set<string>>();
-	private memoTTL = new Map<string, number>();
-	private memoKeysThisFrame = new Set<string>();
+	private memoLastSeenFrame = new Map<string, number>();
 	private memoCollisionCounter = new Map<string, number>();
 	private memoCaptureDepth = 0;
 	private idPrefixStack: string[] = [];
@@ -144,25 +267,70 @@ export class Runtime {
 	private usedFinalIds = new Set<string>();
 	private duplicateWarned = new Set<string>();
 	private frameRoot = new Map<string, FrameEntry[]>();
+	private workingFrameRoot = new Map<string, FrameEntry[]>();
 	private activeLayerStack: string[] = ["default"];
 	private focusedId: string | null = null;
 	private ownedIds = new Set<string>();
-	private framePool = new FramePool();
-	private stateTTL = new Map<string, number>();
-	private static readonly GC_TTL_MS = 1000;
+	private committedFramePool = new FramePool();
+	private workingFramePool = new FramePool();
+	private frameTransaction: FrameTransaction | null = null;
+	private nextFrameTransactionId = 1;
+	private lastCommittedFrameTransactionId: number | null = null;
+	private stateLastSeenFrame = new Map<string, number>();
+	private frameGeneration = 0;
+	private readonly retentionFrames: number;
 	private scopeStack: ScopeEntry[] = [];
 	private drawing = false;
 	private rerenderFn: (() => void) | null = null;
 	private dirty = false;
-	private readonly instanceId = `ism-runtime-${nextRuntimeInstanceId++}`;
+	private readonly instanceId = allocateRuntimeInstanceId();
 	private lifecycleToken = 0;
 	private appMounted = false;
 	private treeRevision = 0;
 	private stateRevision = 0;
+	private treeMutationEpoch = 0;
+	private lastInspectedTreeEpoch = -1;
+	private inspectorSubscribers = 0;
 	private lastTreeFingerprint = "";
 
-	constructor(storage?: StorageAdapter) {
+	constructor(
+		storage?: StorageAdapter,
+		storageNamespace?: string,
+		onStorageError?: (failure: StorageFailure) => void,
+		strictIds = false,
+		strictRuntime = false,
+		onDiagnostic?: errors.DiagnosticSink,
+		retentionFrames = 1,
+	) {
 		this.storage = storage ?? null;
+		this.onStorageError = onStorageError ?? null;
+		this.strictIds = strictIds;
+		this.strictRuntime = strictRuntime;
+		this.onDiagnostic = onDiagnostic ?? null;
+		if (!Number.isSafeInteger(retentionFrames) || retentionFrames < 0) {
+			throw errors.createISMError(
+				"ISM_FRAME_TRANSACTION",
+				"[ism] retentionFrames must be a non-negative safe integer.",
+				{ details: { retentionFrames } },
+			);
+		}
+		this.retentionFrames = retentionFrames;
+
+		if (storage) {
+			const namespace = storageNamespace?.trim();
+			if (!namespace) {
+				throw errors.createISMError(
+					"ISM_STORAGE_FAILURE",
+					"[ism] storageNamespace is required when a storage adapter is configured.",
+					{ details: { operation: "namespace" } },
+				);
+			}
+			this.storageNamespace = namespace;
+			this.storagePrefix = `ism:v1:${encodeURIComponent(namespace)}:`;
+		} else {
+			this.storageNamespace = null;
+			this.storagePrefix = null;
+		}
 	}
 
 	registerApp(rerenderFn: () => void): void {
@@ -187,12 +355,15 @@ export class Runtime {
 	}
 
 	private clearState(): void {
+		this.frameTransaction = null;
+		this.lastCommittedFrameTransactionId = null;
 		this.stateStore.clear();
+		this.stateDefaults.clear();
+		this.persistenceById.clear();
 		this.contextStack.clear();
 		this.memoCache.clear();
 		this.memoKeysByWidgetId.clear();
-		this.memoTTL.clear();
-		this.memoKeysThisFrame.clear();
+		this.memoLastSeenFrame.clear();
 		this.memoCollisionCounter.clear();
 		this.idPrefixStack.length = 0;
 		this.idPrefix = "";
@@ -200,17 +371,24 @@ export class Runtime {
 		this.usedFinalIds.clear();
 		this.duplicateWarned.clear();
 		this.frameRoot.clear();
+		this.workingFrameRoot.clear();
 		this.activeLayerStack = ["default"];
 		this.focusedId = null;
 		this.ownedIds.clear();
-		this.framePool.reset();
-		this.stateTTL.clear();
+		this.committedFramePool.reset();
+		this.committedFramePool.trim(0);
+		this.workingFramePool.reset();
+		this.workingFramePool.trim(0);
+		this.stateLastSeenFrame.clear();
+		this.frameGeneration = 0;
 		this.scopeStack.length = 0;
 		this.drawing = false;
 		this.dirty = false;
 		this.memoCaptureDepth = 0;
+		this.treeMutationEpoch++;
 		this.treeRevision++;
 		this.stateRevision++;
+		this.lastInspectedTreeEpoch = -1;
 		this.lastTreeFingerprint = "";
 	}
 
@@ -222,15 +400,38 @@ export class Runtime {
 		return this.instanceId;
 	}
 
-	getDomId(kind: string, id: string): string {
-		return `${this.instanceId}-${encodeIdSegment(kind)}-${encodeIdSegment(id)}`;
+	getStorageNamespace(): string | null {
+		return this.storageNamespace;
 	}
 
-	beginFrame(): void {
+	getDomId(kind: string, id: string): string {
+		const token = sanitizeDomToken(kind);
+		const hash = hashDomIdValue(`${kind}\0${id}`);
+		return `${this.instanceId}-${token}-${hash}`;
+	}
+
+	beginFrame(): number {
+		// A React replay can start a new render before the previous attempt commits.
+		// Treat the older attempt as abandoned and restore the last committed state.
+		if (this.frameTransaction) this.abortFrame(this.frameTransaction.id);
+
+		const transactionId = this.nextFrameTransactionId++;
+		this.frameTransaction = {
+			id: transactionId,
+			snapshot: this.captureFrameTransactionSnapshot(),
+			pendingStorageMutations: new Map(),
+			prepared: false,
+		};
+
 		this.drawing = true;
-		this.frameRoot.clear();
+		this.frameGeneration++;
+		// Record into a buffer that is distinct from the committed tree. On commit
+		// the buffers swap, so the previous committed objects can be reused safely
+		// by the following speculative frame without mutating live React state.
+		this.workingFrameRoot.clear();
+		this.frameRoot = this.workingFrameRoot;
+		this.workingFramePool.reset();
 		this.activeLayerStack = ["default"];
-		this.framePool.reset();
 		this.collisionCounter.clear();
 		this.memoCollisionCounter.clear();
 		this.usedFinalIds.clear();
@@ -239,77 +440,129 @@ export class Runtime {
 		this.idPrefixStack.length = 0;
 		this.idPrefix = "";
 		this.contextStack.clear();
-		this.memoKeysThisFrame.clear();
 		this.dirty = false;
+		return transactionId;
 	}
 
-	endFrame(): void {
+	prepareFrame(transactionId?: number): void {
+		const transaction = this.requireFrameTransaction(transactionId);
+		if (transaction.prepared) return;
+
 		if (this.scopeStack.length > 0) {
-			console.error(
-				errors.unclosedScopes(this.scopeStack.map((scope) => scope.label)),
+			const scopes = this.scopeStack.map((scope) => scope.label);
+			this.reportInvariant(
+				"ISM_UNCLOSED_SCOPES",
+				errors.unclosedScopes(scopes),
+				{ scopes },
 			);
 		}
 
-		const currentIds = new Set<string>();
-		for (const entries of this.frameRoot.values())
-			this.collectIds(entries, currentIds);
-
-		const now = Date.now();
-		for (const [id, expiry] of this.stateTTL) {
-			if (currentIds.has(id)) {
-				this.stateTTL.set(id, now + Runtime.GC_TTL_MS);
-			} else if (now > expiry) {
-				this.stateStore.delete(id);
-				this.stateRevision++;
-				this.stateTTL.delete(id);
-				this.ownedIds.delete(id);
-				this.invalidateMemoForWidget(id);
-				if (this.focusedId === id) this.focusedId = null;
-			}
-		}
-		for (const id of currentIds) {
-			if (!this.stateTTL.has(id))
-				this.stateTTL.set(id, now + Runtime.GC_TTL_MS);
+		for (const [id, lastSeenFrame] of this.stateLastSeenFrame) {
+			if (this.frameGeneration - lastSeenFrame <= this.retentionFrames)
+				continue;
+			this.stateStore.delete(id);
+			this.stateDefaults.delete(id);
+			this.persistenceById.delete(id);
+			this.stateRevision++;
+			this.stateLastSeenFrame.delete(id);
+			this.ownedIds.delete(id);
+			this.invalidateMemoForWidget(id);
+			if (this.focusedId === id) this.focusedId = null;
 		}
 
-		for (const [key, expiry] of this.memoTTL) {
-			if (this.memoKeysThisFrame.has(key)) {
-				this.memoTTL.set(key, now + Runtime.GC_TTL_MS);
-			} else if (now > expiry) {
+		for (const [key, lastSeenFrame] of this.memoLastSeenFrame) {
+			if (this.frameGeneration - lastSeenFrame > this.retentionFrames) {
 				this.deleteMemo(key);
 			}
 		}
-		for (const key of this.memoKeysThisFrame) {
-			if (!this.memoTTL.has(key))
-				this.memoTTL.set(key, now + Runtime.GC_TTL_MS);
-		}
 
 		if (this.idPrefixStack.length > 0) {
-			console.error(
+			this.reportInvariant(
+				"ISM_UNBALANCED_ID_STACK",
 				`[ism] Unbalanced pushId/popId calls: ${this.idPrefixStack.length} segment(s) remain open.`,
+				{ depth: this.idPrefixStack.length },
 			);
 		}
 		for (const [key, stack] of this.contextStack) {
 			if (stack.length > 0) {
-				console.error(
+				this.reportInvariant(
+					"ISM_UNBALANCED_CONTEXT",
 					`[ism] Unbalanced context stack for "${key}": ${stack.length} value(s) remain.`,
+					{ key, depth: stack.length },
 				);
 			}
 		}
 		if (this.activeLayerStack.length > 1) {
-			console.error(
+			this.reportInvariant(
+				"ISM_UNBALANCED_LAYER_STACK",
 				`[ism] Unbalanced pushLayer/popLayer calls: ${this.activeLayerStack.length - 1} layer(s) remain open.`,
+				{ depth: this.activeLayerStack.length - 1 },
 			);
 		}
 
-		const treeFingerprint = this.computeTreeFingerprint();
-		if (treeFingerprint !== this.lastTreeFingerprint) {
-			this.lastTreeFingerprint = treeFingerprint;
-			this.treeRevision++;
+		this.treeMutationEpoch++;
+		if (this.inspectorSubscribers > 0) this.refreshTreeInspectionRevision();
+
+		this.drawing = false;
+		transaction.prepared = true;
+	}
+
+	commitFrame(transactionId?: number): void {
+		if (!this.frameTransaction) {
+			if (
+				transactionId !== undefined &&
+				transactionId === this.lastCommittedFrameTransactionId
+			) {
+				return;
+			}
+			throw errors.createISMError(
+				"ISM_FRAME_TRANSACTION",
+				"[ism] No frame transaction is active.",
+			);
+		}
+		const transaction = this.requireFrameTransaction(transactionId);
+		if (!transaction.prepared) this.prepareFrame(transaction.id);
+
+		for (const [key, mutation] of transaction.pendingStorageMutations) {
+			this.applyStorageMutation(key, mutation);
 		}
 
-		this.framePool.trim(Math.max(currentIds.size * 2, 128));
+		const poolRetention = Math.max(this.workingFramePool.usedCount * 2, 128);
+		const previousCommittedPool = this.committedFramePool;
+		this.committedFramePool = this.workingFramePool;
+		this.workingFramePool = previousCommittedPool;
+		this.workingFramePool.reset();
+		this.workingFramePool.trim(poolRetention);
+
+		const previousCommittedRoot = transaction.snapshot.frameRoot;
+		this.workingFrameRoot = previousCommittedRoot;
+		this.workingFrameRoot.clear();
+
+		this.lastCommittedFrameTransactionId = transaction.id;
+		this.frameTransaction = null;
+		if (this.dirty) this.scheduleRerender();
+	}
+
+	abortFrame(transactionId?: number): void {
+		const transaction = this.frameTransaction;
+		if (!transaction) return;
+		if (transactionId !== undefined && transaction.id !== transactionId) return;
+
+		this.restoreFrameTransactionSnapshot(transaction.snapshot);
+		this.workingFramePool.reset();
+		this.frameTransaction = null;
 		this.drawing = false;
+	}
+
+	/**
+	 * Synchronously finalize a frame. Kept for direct Runtime consumers and
+	 * tests; React integration uses prepareFrame() during render and
+	 * commitFrame() from the commit phase.
+	 */
+	endFrame(): void {
+		const transaction = this.requireFrameTransaction();
+		this.prepareFrame(transaction.id);
+		this.commitFrame(transaction.id);
 	}
 
 	isDrawing(): boolean {
@@ -320,29 +573,60 @@ export class Runtime {
 		return this.frameRoot;
 	}
 
-	getState<S>(id: string, defaultState: S, persistent = false): S {
+	getState<S>(
+		id: string,
+		defaultState: S,
+		persistent: PersistenceRequest<S> = false,
+	): S {
+		const persistence = this.normalizePersistence(persistent);
+
 		if (!this.stateStore.has(id)) {
 			let initialState: S;
 			try {
 				initialState = structuredClone(defaultState);
 			} catch (error) {
-				throw new Error(
+				throw errors.createISMError(
+					"ISM_DEFAULT_STATE_CLONE_FAILURE",
 					errors.defaultStateCloneFailure(id, errors.getErrorMessage(error)),
+					{ cause: error, details: { id } },
 				);
 			}
 
-			if (persistent && this.storage) {
-				const stored = this.storage.get(id);
-				if (stored !== undefined && stored !== null) initialState = stored as S;
-				else this.storage.set(id, initialState);
+			this.stateDefaults.set(id, structuredClone(initialState));
+			if (persistence) {
+				this.persistenceById.set(id, persistence);
+
+				if (this.storage) {
+					const stored = this.readPersistentState<S>(id, persistence);
+					if (stored.status === "found") {
+						initialState = stored.value;
+						if (stored.normalize) {
+							this.writeStorage(id, initialState, persistence);
+						}
+					} else if (
+						stored.status === "missing" ||
+						stored.status === "invalid"
+					) {
+						this.writeStorage(id, initialState, persistence);
+					}
+				}
 			}
+
 			this.stateStore.set(id, initialState);
 			this.stateRevision++;
+		} else if (persistence) {
+			this.persistenceById.set(id, persistence);
 		}
+
+		this.stateLastSeenFrame.set(id, this.frameGeneration);
 		return this.stateStore.get(id) as S;
 	}
 
-	setState(id: string, updater: unknown, persistent = false): void {
+	setState(
+		id: string,
+		updater: unknown,
+		persistent: PersistenceRequest<unknown> = false,
+	): void {
 		if (!this.stateStore.has(id)) return;
 		const current = this.stateStore.get(id);
 		const next =
@@ -351,7 +635,10 @@ export class Runtime {
 				: updater;
 		this.stateStore.set(id, next);
 		this.stateRevision++;
-		if (persistent && this.storage) this.storage.set(id, next);
+
+		const persistence = this.resolvePersistenceForId(id, persistent);
+		if (persistence && this.storage) this.writeStorage(id, next, persistence);
+
 		this.invalidateMemoForWidget(id);
 		this.markDirty();
 	}
@@ -360,14 +647,76 @@ export class Runtime {
 		id: string,
 		currentState: unknown,
 		consumer: (state: unknown) => unknown,
-		persistent = false,
+		persistent: PersistenceRequest<unknown> = false,
 	): void {
 		if (!this.stateStore.has(id)) return;
 		const next = consumer(currentState);
 		if (shallowStateEqual(currentState, next)) return;
 		this.stateStore.set(id, next);
 		this.stateRevision++;
-		if (persistent && this.storage) this.storage.set(id, next);
+
+		const persistence = this.resolvePersistenceForId(id, persistent);
+		if (persistence && this.storage) this.writeStorage(id, next, persistence);
+	}
+
+	/** Reset one live widget state to its declared default value. */
+	resetState(id: string): boolean {
+		if (!this.stateDefaults.has(id) || !this.stateStore.has(id)) return false;
+
+		let next: unknown;
+		try {
+			next = structuredClone(this.stateDefaults.get(id));
+		} catch (error) {
+			throw errors.createISMError(
+				"ISM_DEFAULT_STATE_CLONE_FAILURE",
+				errors.defaultStateCloneFailure(id, errors.getErrorMessage(error)),
+				{ cause: error, details: { id } },
+			);
+		}
+
+		this.stateStore.set(id, next);
+		this.stateRevision++;
+		if (this.persistenceById.has(id)) this.deleteStorage(id);
+		this.invalidateMemoForWidget(id);
+		this.markDirty();
+		return true;
+	}
+
+	/** Delete persisted values for every persistent widget known to this runtime. */
+	clearPersistentState(): number {
+		if (!this.storage) return 0;
+		let count = 0;
+		for (const id of this.persistenceById.keys()) {
+			if (this.deleteStorage(id)) count++;
+		}
+		return count;
+	}
+
+	/** Delete every storage key owned by this runtime's stable namespace. */
+	clearStorageNamespace(): number {
+		const prefix = this.storagePrefix;
+		if (!this.storage || !prefix) return 0;
+
+		let keys: string[];
+		try {
+			keys = Array.from(this.storage.keys());
+		} catch (error) {
+			this.reportStorageFailure("keys", undefined, error);
+			return 0;
+		}
+
+		const keysToDelete = new Set(keys.filter((key) => key.startsWith(prefix)));
+		if (this.frameTransaction) {
+			for (const key of this.frameTransaction.pendingStorageMutations.keys()) {
+				if (key.startsWith(prefix)) keysToDelete.add(key);
+			}
+		}
+
+		let count = 0;
+		for (const key of keysToDelete) {
+			if (this.deleteStorageKey(key)) count++;
+		}
+		return count;
 	}
 
 	buildId(widgetName: string, label: string | undefined): string {
@@ -379,6 +728,17 @@ export class Runtime {
 					: label;
 		const rawId = `${this.idPrefix}${encodeIdSegment(widgetName)}/${encodeIdSegment(rawLabel)}`;
 		let occurrence = this.collisionCounter.get(rawId) ?? 0;
+
+		if (occurrence > 0 && this.strictIds) {
+			const displayLabel =
+				label === undefined ? widgetName : extractDisplayLabel(label);
+			throw errors.createISMError(
+				"ISM_DUPLICATE_ID_STRICT",
+				errors.duplicateIdStrict(widgetName, displayLabel),
+				{ details: { widgetName, displayLabel } },
+			);
+		}
+
 		let finalId = occurrence === 0 ? rawId : `${rawId}__${occurrence + 1}`;
 
 		while (this.usedFinalIds.has(finalId)) {
@@ -394,7 +754,13 @@ export class Runtime {
 			!this.duplicateWarned.has(rawId)
 		) {
 			this.duplicateWarned.add(rawId);
-			console.warn(errors.duplicateId(widgetName, extractDisplayLabel(label)));
+			const displayLabel = extractDisplayLabel(label);
+			this.emitRuntimeDiagnostic(
+				"ISM_DUPLICATE_ID",
+				"warning",
+				errors.duplicateId(widgetName, displayLabel),
+				{ widgetName, displayLabel },
+			);
 		}
 		return finalId;
 	}
@@ -415,7 +781,11 @@ export class Runtime {
 	popContext(key: string): void {
 		const stack = this.contextStack.get(key);
 		if (!stack || stack.length === 0) {
-			console.warn(errors.unbalancedPopContext(key));
+			this.reportInvariant(
+				"ISM_UNBALANCED_CONTEXT",
+				errors.unbalancedPopContext(key),
+				{ key },
+			);
 			return;
 		}
 		stack.pop();
@@ -432,7 +802,7 @@ export class Runtime {
 
 	popLayer(): void {
 		if (this.activeLayerStack.length <= 1) {
-			console.warn(errors.popDefaultLayer());
+			this.reportInvariant("ISM_POP_DEFAULT_LAYER", errors.popDefaultLayer());
 			return;
 		}
 		this.activeLayerStack.pop();
@@ -449,7 +819,7 @@ export class Runtime {
 		this.memoCollisionCounter.set(base, count);
 		const suffix = count === 1 ? "" : `__${count}`;
 		const cacheKey = `${base}${suffix}`;
-		this.memoKeysThisFrame.add(cacheKey);
+		this.memoLastSeenFrame.set(cacheKey, this.frameGeneration);
 		return { cacheKey, idSegment: `${encoded}${suffix}` };
 	}
 
@@ -466,6 +836,7 @@ export class Runtime {
 		this.deleteMemo(id);
 		const widgetIds = this.collectSubtreeIds(subtree);
 		this.memoCache.set(id, { deps: [...deps], subtree, widgetIds });
+		this.memoLastSeenFrame.set(id, this.frameGeneration);
 		for (const widgetId of widgetIds) {
 			let keys = this.memoKeysByWidgetId.get(widgetId);
 			if (!keys) {
@@ -486,7 +857,7 @@ export class Runtime {
 			}
 		}
 		this.memoCache.delete(id);
-		this.memoTTL.delete(id);
+		this.memoLastSeenFrame.delete(id);
 	}
 
 	private invalidateMemoForWidget(widgetId: string): void {
@@ -512,22 +883,24 @@ export class Runtime {
 		const warnedSnapshot = new Set(this.duplicateWarned);
 		const ownedSnapshot = new Set(this.ownedIds);
 		const stateSnapshot = new Map(this.stateStore);
-		const stateTTLSnapshot = new Map(this.stateTTL);
+		const stateDefaultsSnapshot = new Map(this.stateDefaults);
+		const persistenceSnapshot = new Map(this.persistenceById);
+		const stateLastSeenFrameSnapshot = new Map(this.stateLastSeenFrame);
 		const stateRevisionSnapshot = this.stateRevision;
 		const memoCacheSnapshot = new Map(this.memoCache);
 		const memoKeysByWidgetIdSnapshot = cloneMapOfSets(this.memoKeysByWidgetId);
-		const memoTTLSnapshot = new Map(this.memoTTL);
-		const memoKeysThisFrameSnapshot = new Set(this.memoKeysThisFrame);
+		const memoLastSeenFrameSnapshot = new Map(this.memoLastSeenFrame);
 		const dirtySnapshot = this.dirty;
+		const pendingStorageSnapshot = this.frameTransaction
+			? new Map(this.frameTransaction.pendingStorageMutations)
+			: null;
 		const detached: FrameEntry = {
 			id: `__memo_capture__/${encodeIdSegment(memoId)}`,
 			widgetName: "MemoCapture",
 			args: [],
-			scoped: true,
 			children: [],
-			defaultState: null,
 			renderState: null,
-			persistent: false,
+			persistence: null,
 			widgetProps: {
 				"data-ism-widget": "MemoCapture",
 				"data-ism-id": "",
@@ -557,7 +930,11 @@ export class Runtime {
 				arraysEqual(this.activeLayerStack, layerSnapshot);
 
 			if (!scopeBalanced || !otherStacksBalanced) {
-				throw new Error(errors.memoBlockUnbalancedState(memoId));
+				throw errors.createISMError(
+					"ISM_MEMO_UNBALANCED",
+					errors.memoBlockUnbalancedState(memoId),
+					{ details: { memoId } },
+				);
 			}
 
 			succeeded = true;
@@ -577,22 +954,28 @@ export class Runtime {
 				restoreSet(this.duplicateWarned, warnedSnapshot);
 				restoreSet(this.ownedIds, ownedSnapshot);
 				restoreMap(this.stateStore, stateSnapshot);
-				restoreMap(this.stateTTL, stateTTLSnapshot);
+				restoreMap(this.stateDefaults, stateDefaultsSnapshot);
+				restoreMap(this.persistenceById, persistenceSnapshot);
+				restoreMap(this.stateLastSeenFrame, stateLastSeenFrameSnapshot);
 				this.stateRevision = stateRevisionSnapshot;
 				restoreMap(this.memoCache, memoCacheSnapshot);
 				restoreMap(this.memoKeysByWidgetId, memoKeysByWidgetIdSnapshot);
-				restoreMap(this.memoTTL, memoTTLSnapshot);
-				restoreSet(this.memoKeysThisFrame, memoKeysThisFrameSnapshot);
+				restoreMap(this.memoLastSeenFrame, memoLastSeenFrameSnapshot);
 				this.dirty = dirtySnapshot;
+				if (this.frameTransaction && pendingStorageSnapshot) {
+					restoreMap(
+						this.frameTransaction.pendingStorageMutations,
+						pendingStorageSnapshot,
+					);
+				}
 			}
 		}
 	}
 
 	pushCachedSubtree(subtree: FrameEntry[]): boolean {
-		const ids = this.collectSubtreeIds(subtree);
+		const ids = this.collectSubtreeIds(subtree, true);
 		if (ids.some((id) => this.usedFinalIds.has(id))) return false;
 		for (const id of ids) this.reserveId(id);
-		this.refreshRenderState(subtree);
 		this.getCurrentParentChildren().push(...subtree);
 		return true;
 	}
@@ -624,7 +1007,22 @@ export class Runtime {
 	}
 
 	getInspectionRevision(kind: "tree" | "state"): number {
-		return kind === "tree" ? this.treeRevision : this.stateRevision;
+		if (kind === "state") return this.stateRevision;
+		if (this.lastInspectedTreeEpoch !== this.treeMutationEpoch) {
+			this.refreshTreeInspectionRevision();
+		}
+		return this.treeRevision;
+	}
+
+	/** Keep tree revision tracking hot only while an inspector is actively open. */
+	attachInspector(): () => void {
+		this.inspectorSubscribers++;
+		let attached = true;
+		return () => {
+			if (!attached) return;
+			attached = false;
+			this.inspectorSubscribers = Math.max(0, this.inspectorSubscribers - 1);
+		};
 	}
 
 	pushScope(id: string, label: string, frameEntry: FrameEntry): void {
@@ -639,7 +1037,7 @@ export class Runtime {
 
 	popScope(): void {
 		if (this.scopeStack.length === 0) {
-			console.error(errors.endWithoutScope());
+			this.reportInvariant("ISM_END_WITHOUT_SCOPE", errors.endWithoutScope());
 			return;
 		}
 		const scope = this.scopeStack.pop();
@@ -647,7 +1045,7 @@ export class Runtime {
 	}
 
 	acquireFrameEntry(): FrameEntry {
-		return this.framePool.acquire();
+		return this.workingFramePool.acquire();
 	}
 
 	getCurrentParentChildren(): FrameEntry[] {
@@ -669,7 +1067,7 @@ export class Runtime {
 
 	popIdSegment(): void {
 		if (this.idPrefixStack.length === 0) {
-			console.warn(errors.popIdEmpty());
+			this.reportInvariant("ISM_POP_ID_EMPTY", errors.popIdEmpty());
 			return;
 		}
 		this.idPrefix = this.idPrefixStack.pop() ?? "";
@@ -678,6 +1076,13 @@ export class Runtime {
 	markDirty(): void {
 		if (this.dirty) return;
 		this.dirty = true;
+		// Draw/render work is speculative until React commits it. Do not schedule
+		// observable React work from an uncommitted attempt.
+		if (this.frameTransaction) return;
+		this.scheduleRerender();
+	}
+
+	private scheduleRerender(): void {
 		if (!this.rerenderFn) return;
 		const trigger = this.rerenderFn;
 		const lifecycleToken = this.lifecycleToken;
@@ -692,6 +1097,441 @@ export class Runtime {
 		});
 	}
 
+	private normalizePersistence<S>(
+		persistent: PersistenceRequest<S>,
+	): ResolvedPersistenceOptions | null {
+		if (!persistent) return null;
+		if (persistent === true) return { storageVersion: 1 };
+
+		const storageVersion = persistent.storageVersion ?? 1;
+		if (!Number.isSafeInteger(storageVersion) || storageVersion < 1) {
+			throw new Error("[ism] storageVersion must be a positive safe integer.");
+		}
+
+		return {
+			storageVersion,
+			...(persistent.validateStoredState
+				? {
+						validateStoredState: (value: unknown) =>
+							persistent.validateStoredState?.(value) ?? false,
+					}
+				: {}),
+			...(persistent.migrateStoredState
+				? {
+						migrateStoredState: (
+							value: unknown,
+							fromVersion: number,
+							toVersion: number,
+						) => persistent.migrateStoredState?.(value, fromVersion, toVersion),
+					}
+				: {}),
+			...(persistent.serialize
+				? { serialize: (state: unknown) => persistent.serialize?.(state as S) }
+				: {}),
+			...(persistent.deserialize
+				? { deserialize: persistent.deserialize }
+				: {}),
+		};
+	}
+
+	private resolvePersistenceForId(
+		id: string,
+		persistent: PersistenceRequest<unknown>,
+	): ResolvedPersistenceOptions | null {
+		const explicit = this.normalizePersistence(persistent);
+		if (explicit) return explicit;
+		return this.persistenceById.get(id) ?? null;
+	}
+
+	private getStorageKey(id: string): string {
+		if (!this.storagePrefix) {
+			throw new Error("[ism] No storage namespace is configured.");
+		}
+		return `${this.storagePrefix}${encodeURIComponent(id)}`;
+	}
+
+	private readPersistentState<S>(
+		id: string,
+		persistence: ResolvedPersistenceOptions,
+	): StorageReadResult<S> {
+		if (!this.storage) return { status: "missing" };
+		const key = this.getStorageKey(id);
+
+		let exists: boolean;
+		try {
+			exists = this.storage.has(key);
+		} catch (error) {
+			this.reportStorageFailure("has", key, error);
+			return { status: "unavailable" };
+		}
+		if (!exists) return { status: "missing" };
+
+		let raw: unknown;
+		try {
+			raw = this.storage.get(key);
+		} catch (error) {
+			this.reportStorageFailure("get", key, error);
+			return { status: "unavailable" };
+		}
+
+		const currentVersion = persistence.storageVersion ?? 1;
+		let storedVersion = currentVersion;
+		let value = raw;
+		let normalize = true;
+
+		if (this.hasPersistedStateTag(raw)) {
+			if (!this.isPersistedStateRecord(raw)) {
+				this.reportStorageFailure(
+					"validate",
+					key,
+					new Error("Stored state envelope is malformed."),
+				);
+				return { status: "invalid" };
+			}
+			storedVersion = raw.version;
+			value = raw.value;
+			normalize = false;
+		}
+
+		if (persistence.deserialize) {
+			try {
+				value = persistence.deserialize(value);
+			} catch (error) {
+				this.reportStorageFailure("deserialize", key, error);
+				return { status: "invalid" };
+			}
+		}
+
+		if (storedVersion !== currentVersion) {
+			if (!persistence.migrateStoredState) {
+				this.reportStorageFailure(
+					"migrate",
+					key,
+					new Error(
+						`Stored state version ${storedVersion} does not match ${currentVersion} and no migration hook is configured.`,
+					),
+				);
+				return { status: "invalid" };
+			}
+
+			try {
+				value = persistence.migrateStoredState(
+					value,
+					storedVersion,
+					currentVersion,
+				);
+				normalize = true;
+			} catch (error) {
+				this.reportStorageFailure("migrate", key, error);
+				return { status: "invalid" };
+			}
+		}
+
+		if (persistence.validateStoredState) {
+			let valid = false;
+			try {
+				valid = persistence.validateStoredState(value);
+			} catch (error) {
+				this.reportStorageFailure("validate", key, error);
+				return { status: "invalid" };
+			}
+
+			if (!valid) {
+				this.reportStorageFailure(
+					"validate",
+					key,
+					new Error("Stored state failed validation."),
+				);
+				return { status: "invalid" };
+			}
+		}
+
+		try {
+			return {
+				status: "found",
+				value: structuredClone(value) as S,
+				normalize,
+			};
+		} catch (error) {
+			this.reportStorageFailure("validate", key, error);
+			return { status: "invalid" };
+		}
+	}
+
+	private writeStorage(
+		id: string,
+		value: unknown,
+		persistence: ResolvedPersistenceOptions,
+	): void {
+		if (!this.storage) return;
+		const key = this.getStorageKey(id);
+		const mutation: PendingStorageSet = {
+			kind: "set",
+			value,
+			persistence,
+		};
+
+		if (this.frameTransaction) {
+			this.frameTransaction.pendingStorageMutations.set(key, mutation);
+			return;
+		}
+		this.applyStorageMutation(key, mutation);
+	}
+
+	private deleteStorage(id: string): boolean {
+		if (!this.storage) return false;
+		return this.deleteStorageKey(this.getStorageKey(id));
+	}
+
+	private deleteStorageKey(key: string): boolean {
+		if (!this.storage) return false;
+		const mutation: PendingStorageDelete = { kind: "delete" };
+		if (this.frameTransaction) {
+			this.frameTransaction.pendingStorageMutations.set(key, mutation);
+			return true;
+		}
+		return this.applyStorageMutation(key, mutation);
+	}
+
+	private applyStorageMutation(
+		key: string,
+		mutation: PendingStorageMutation,
+	): boolean {
+		if (!this.storage) return false;
+
+		if (mutation.kind === "delete") {
+			try {
+				this.storage.delete(key);
+				return true;
+			} catch (error) {
+				this.reportStorageFailure("delete", key, error);
+				return false;
+			}
+		}
+
+		let payload = mutation.value;
+		if (mutation.persistence.serialize) {
+			try {
+				payload = mutation.persistence.serialize(payload);
+			} catch (error) {
+				this.reportStorageFailure("serialize", key, error);
+				return false;
+			}
+		}
+
+		const record: PersistedStateRecord = {
+			__ismState: 1,
+			version: mutation.persistence.storageVersion ?? 1,
+			value: payload,
+		};
+
+		try {
+			this.storage.set(key, record);
+			return true;
+		} catch (error) {
+			this.reportStorageFailure("set", key, error);
+			return false;
+		}
+	}
+
+	private hasPersistedStateTag(value: unknown): boolean {
+		return (
+			value !== null &&
+			typeof value === "object" &&
+			(value as { __ismState?: unknown }).__ismState === 1
+		);
+	}
+
+	private isPersistedStateRecord(
+		value: unknown,
+	): value is PersistedStateRecord {
+		if (value === null || typeof value !== "object") return false;
+		const record = value as Partial<PersistedStateRecord>;
+		return (
+			record.__ismState === 1 &&
+			Number.isSafeInteger(record.version) &&
+			(record.version ?? 0) >= 1 &&
+			Object.hasOwn(record, "value")
+		);
+	}
+
+	private reportStorageFailure(
+		operation: StorageOperation,
+		key: string | undefined,
+		error: unknown,
+	): void {
+		const failure: StorageFailure = {
+			operation,
+			...(key === undefined ? {} : { key }),
+			error,
+		};
+
+		let storageHookHandled = false;
+		if (this.onStorageError) {
+			try {
+				this.onStorageError(failure);
+				storageHookHandled = true;
+			} catch (hookError) {
+				this.emitRuntimeDiagnostic(
+					"ISM_STORAGE_FAILURE",
+					"error",
+					"[ism] onStorageError hook threw while reporting a storage failure.",
+					{ operation, ...(key ? { key } : {}) },
+					hookError,
+				);
+			}
+		}
+		if (storageHookHandled && !this.onDiagnostic) return;
+
+		this.emitRuntimeDiagnostic(
+			"ISM_STORAGE_FAILURE",
+			"error",
+			`[ism] Storage ${operation} failed${key ? ` for "${key}"` : ""}.`,
+			{ operation, ...(key ? { key } : {}) },
+			error,
+		);
+	}
+
+	private requireFrameTransaction(transactionId?: number): FrameTransaction {
+		const transaction = this.frameTransaction;
+		if (!transaction) {
+			throw errors.createISMError(
+				"ISM_FRAME_TRANSACTION",
+				"[ism] No frame transaction is active.",
+			);
+		}
+		if (transactionId !== undefined && transaction.id !== transactionId) {
+			throw errors.createISMError(
+				"ISM_FRAME_TRANSACTION",
+				`[ism] Frame transaction ${transactionId} is no longer active.`,
+				{ details: { transactionId, activeTransactionId: transaction.id } },
+			);
+		}
+		return transaction;
+	}
+
+	/** Emit a structured diagnostic through this runtime's configured sink. @internal */
+	reportDiagnostic(diagnostic: errors.ISMDiagnostic): void {
+		errors.emitDiagnostic(this.onDiagnostic, {
+			...diagnostic,
+			runtimeId: diagnostic.runtimeId ?? this.instanceId,
+		});
+	}
+
+	private emitRuntimeDiagnostic(
+		code: errors.ISMErrorCode,
+		level: errors.DiagnosticLevel,
+		message: string,
+		details?: Readonly<Record<string, unknown>>,
+		cause?: unknown,
+	): void {
+		this.reportDiagnostic(
+			errors.createDiagnostic(code, level, message, {
+				...(details ? { details } : {}),
+				...(cause !== undefined ? { cause } : {}),
+			}),
+		);
+	}
+
+	private reportInvariant(
+		code: errors.ISMErrorCode,
+		message: string,
+		details?: Readonly<Record<string, unknown>>,
+	): void {
+		if (this.strictRuntime) {
+			throw errors.createISMError(code, message, {
+				...(details ? { details } : {}),
+			});
+		}
+		this.emitRuntimeDiagnostic(code, "error", message, details);
+	}
+
+	private captureFrameTransactionSnapshot(): FrameTransactionSnapshot {
+		return {
+			frameRoot: this.frameRoot,
+			stateStore: new Map(this.stateStore),
+			stateDefaults: new Map(this.stateDefaults),
+			persistenceById: new Map(this.persistenceById),
+			contextStack: cloneMapOfArrays(this.contextStack),
+			memoCache: this.cloneMemoCache(this.memoCache),
+			memoKeysByWidgetId: cloneMapOfSets(this.memoKeysByWidgetId),
+			memoLastSeenFrame: new Map(this.memoLastSeenFrame),
+			memoCollisionCounter: new Map(this.memoCollisionCounter),
+			idPrefixStack: [...this.idPrefixStack],
+			idPrefix: this.idPrefix,
+			collisionCounter: new Map(this.collisionCounter),
+			usedFinalIds: new Set(this.usedFinalIds),
+			duplicateWarned: new Set(this.duplicateWarned),
+			activeLayerStack: [...this.activeLayerStack],
+			focusedId: this.focusedId,
+			ownedIds: new Set(this.ownedIds),
+			stateLastSeenFrame: new Map(this.stateLastSeenFrame),
+			frameGeneration: this.frameGeneration,
+			treeMutationEpoch: this.treeMutationEpoch,
+			lastInspectedTreeEpoch: this.lastInspectedTreeEpoch,
+			scopeStack: [...this.scopeStack],
+			dirty: this.dirty,
+			treeRevision: this.treeRevision,
+			stateRevision: this.stateRevision,
+			lastTreeFingerprint: this.lastTreeFingerprint,
+		};
+	}
+
+	private restoreFrameTransactionSnapshot(
+		snapshot: FrameTransactionSnapshot,
+	): void {
+		this.frameRoot = snapshot.frameRoot;
+		restoreMap(this.stateStore, snapshot.stateStore);
+		restoreMap(this.stateDefaults, snapshot.stateDefaults);
+		restoreMap(this.persistenceById, snapshot.persistenceById);
+		restoreMap(this.contextStack, snapshot.contextStack);
+		restoreMap(this.memoCache, snapshot.memoCache);
+		restoreMap(this.memoKeysByWidgetId, snapshot.memoKeysByWidgetId);
+		restoreMap(this.memoLastSeenFrame, snapshot.memoLastSeenFrame);
+		restoreMap(this.memoCollisionCounter, snapshot.memoCollisionCounter);
+		this.idPrefixStack = [...snapshot.idPrefixStack];
+		this.idPrefix = snapshot.idPrefix;
+		restoreMap(this.collisionCounter, snapshot.collisionCounter);
+		restoreSet(this.usedFinalIds, snapshot.usedFinalIds);
+		restoreSet(this.duplicateWarned, snapshot.duplicateWarned);
+		this.activeLayerStack = [...snapshot.activeLayerStack];
+		this.focusedId = snapshot.focusedId;
+		restoreSet(this.ownedIds, snapshot.ownedIds);
+		restoreMap(this.stateLastSeenFrame, snapshot.stateLastSeenFrame);
+		this.frameGeneration = snapshot.frameGeneration;
+		this.treeMutationEpoch = snapshot.treeMutationEpoch;
+		this.lastInspectedTreeEpoch = snapshot.lastInspectedTreeEpoch;
+		this.scopeStack = [...snapshot.scopeStack];
+		this.dirty = snapshot.dirty;
+		this.treeRevision = snapshot.treeRevision;
+		this.stateRevision = snapshot.stateRevision;
+		this.lastTreeFingerprint = snapshot.lastTreeFingerprint;
+	}
+
+	private cloneMemoCache(
+		source: Map<string, MemoCacheEntry>,
+	): Map<string, MemoCacheEntry> {
+		return new Map(
+			Array.from(source, ([key, value]) => [
+				key,
+				{
+					deps: [...value.deps],
+					subtree: this.cloneSubtree(value.subtree),
+					widgetIds: [...value.widgetIds],
+				},
+			]),
+		);
+	}
+
+	private refreshTreeInspectionRevision(): void {
+		const treeFingerprint = this.computeTreeFingerprint();
+		if (treeFingerprint !== this.lastTreeFingerprint) {
+			this.lastTreeFingerprint = treeFingerprint;
+			this.treeRevision++;
+		}
+		this.lastInspectedTreeEpoch = this.treeMutationEpoch;
+	}
+
 	private computeTreeFingerprint(): string {
 		let firstHash = 0x811c9dc5;
 		let secondHash = 0x9e3779b9;
@@ -703,20 +1543,29 @@ export class Runtime {
 				secondHash = Math.imul(secondHash ^ code, 0x85ebca6b);
 			}
 		};
-		const visit = (entries: FrameEntry[]) => {
-			mix("[");
-			for (const entry of entries) {
-				nodeCount++;
-				mix(entry.id);
-				visit(entry.children);
-			}
-			mix("]");
-		};
 
 		for (const [layer, entries] of this.frameRoot) {
 			mix("<");
 			mix(layer);
-			visit(entries);
+			mix("[");
+			const stack: Array<{ entries: FrameEntry[]; index: number }> = [
+				{ entries, index: 0 },
+			];
+			while (stack.length > 0) {
+				const frame = stack[stack.length - 1];
+				if (!frame) break;
+				if (frame.index >= frame.entries.length) {
+					mix("]");
+					stack.pop();
+					continue;
+				}
+				const entry = frame.entries[frame.index++];
+				if (!entry) continue;
+				nodeCount++;
+				mix(entry.id);
+				mix("[");
+				stack.push({ entries: entry.children, index: 0 });
+			}
 			mix(">");
 		}
 
@@ -726,51 +1575,82 @@ export class Runtime {
 	private reserveId(id: string): void {
 		this.usedFinalIds.add(id);
 		this.ownedIds.add(id);
-	}
-
-	private collectIds(entries: FrameEntry[], ids: Set<string>): void {
-		for (const entry of entries) {
-			ids.add(entry.id);
-			this.collectIds(entry.children, ids);
+		if (this.stateStore.has(id)) {
+			this.stateLastSeenFrame.set(id, this.frameGeneration);
 		}
 	}
 
-	private collectSubtreeIds(entries: FrameEntry[]): string[] {
+	private collectSubtreeIds(
+		entries: FrameEntry[],
+		refreshState = false,
+	): string[] {
 		const ids: string[] = [];
-		const visit = (nodes: FrameEntry[]) => {
-			for (const node of nodes) {
-				ids.push(node.id);
-				visit(node.children);
+		const stack: FrameEntry[] = [];
+		for (let index = entries.length - 1; index >= 0; index--) {
+			const entry = entries[index];
+			if (entry) stack.push(entry);
+		}
+		while (stack.length > 0) {
+			const entry = stack.pop();
+			if (!entry) continue;
+			ids.push(entry.id);
+			if (refreshState && this.stateStore.has(entry.id)) {
+				entry.renderState = this.stateStore.get(entry.id);
 			}
-		};
-		visit(entries);
+			for (let index = entry.children.length - 1; index >= 0; index--) {
+				const child = entry.children[index];
+				if (child) stack.push(child);
+			}
+		}
 		return ids;
 	}
 
-	private refreshRenderState(entries: FrameEntry[]): void {
-		for (const entry of entries) {
-			if (this.stateStore.has(entry.id))
-				entry.renderState = this.stateStore.get(entry.id);
-			this.refreshRenderState(entry.children);
-		}
-	}
-
 	private cloneSubtree(entries: FrameEntry[]): FrameEntry[] {
-		return entries.map((entry) => ({
-			...entry,
-			args: [...entry.args],
-			widgetProps: { ...entry.widgetProps },
-			children: this.cloneSubtree(entry.children),
-		}));
+		const root: FrameEntry[] = [];
+		const stack: Array<{
+			source: FrameEntry[];
+			target: FrameEntry[];
+			index: number;
+		}> = [{ source: entries, target: root, index: 0 }];
+
+		while (stack.length > 0) {
+			const frame = stack[stack.length - 1];
+			if (!frame) break;
+			if (frame.index >= frame.source.length) {
+				stack.pop();
+				continue;
+			}
+			const entry = frame.source[frame.index++];
+			if (!entry) continue;
+			const clone: FrameEntry = {
+				...entry,
+				args: [...entry.args],
+				widgetProps: { ...entry.widgetProps },
+				children: [],
+			};
+			frame.target.push(clone);
+			if (entry.children.length > 0) {
+				stack.push({
+					source: entry.children,
+					target: clone.children,
+					index: 0,
+				});
+			}
+		}
+		return root;
 	}
 
 	private snapshotFrameLengths(): Map<FrameEntry[], number> {
 		const snapshot = new Map<FrameEntry[], number>();
-		const visit = (entries: FrameEntry[]) => {
+		const stack: FrameEntry[][] = Array.from(this.frameRoot.values());
+		while (stack.length > 0) {
+			const entries = stack.pop();
+			if (!entries) continue;
 			snapshot.set(entries, entries.length);
-			for (const entry of entries) visit(entry.children);
-		};
-		for (const entries of this.frameRoot.values()) visit(entries);
+			for (const entry of entries) {
+				if (entry.children.length > 0) stack.push(entry.children);
+			}
+		}
 		return snapshot;
 	}
 
@@ -817,9 +1697,13 @@ export function getRuntimeForId(id: string): Runtime | undefined {
 			continue;
 		}
 		if (rememberCrossRuntimeWarning(id)) {
-			console.warn(
-				`[ism] Multiple mounted apps produced the same widget id ('${id}'). ` +
-					"Ids are unique within one createApp root, but routing for this id across roots is ambiguous.",
+			match.reportDiagnostic(
+				errors.createDiagnostic(
+					"ISM_CROSS_RUNTIME_ID_COLLISION",
+					"warning",
+					`[ism] Multiple mounted apps produced the same widget id ('${id}'). Ids are unique within one createApp root, but routing for this id across roots is ambiguous.`,
+					{ details: { id } },
+				),
 			);
 		}
 		break;
@@ -837,17 +1721,12 @@ export function getRuntimeByInstanceId(
 	return undefined;
 }
 
-if (typeof window !== "undefined") {
-	const win = window as unknown as Record<string, unknown>;
-	const existing =
-		typeof win.__ISM_DEVTOOLS__ === "object" && win.__ISM_DEVTOOLS__ !== null
-			? (win.__ISM_DEVTOOLS__ as Record<string, unknown>)
-			: {};
-	win.__ISM_DEVTOOLS__ = { ...existing, getRuntimes: () => mountedRuntimes };
-}
-
 export function getActiveRuntime(): Runtime {
-	if (!activeRuntime) throw new Error(errors.noActiveRuntime());
+	if (!activeRuntime)
+		throw errors.createISMError(
+			"ISM_NO_ACTIVE_RUNTIME",
+			errors.noActiveRuntime(),
+		);
 	return activeRuntime;
 }
 

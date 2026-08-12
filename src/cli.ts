@@ -4,7 +4,13 @@ import { join } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { DEFAULT_LAYER_Z_INDEX, DEFAULT_SHOW_DEV_TOOLS } from "./config";
+import {
+	DEFAULT_LAYER_MODE,
+	DEFAULT_LAYER_Z_INDEX,
+	DEFAULT_SHOW_DEV_TOOLS,
+	DEFAULT_STRICT_IDS,
+	DEFAULT_STRICT_RUNTIME,
+} from "./config";
 import { getErrorMessage } from "./errors";
 
 const CONFIG_FILENAME = "ism.config.json";
@@ -83,7 +89,10 @@ export function runCli(argv: string[], deps: CliDeps): number {
 		{
 			$schema: `https://unpkg.com/@ispoofermotion/core@${deps.version}/schema.json`,
 			layerZIndex: DEFAULT_LAYER_Z_INDEX,
+			layerMode: DEFAULT_LAYER_MODE,
 			showDevTools: DEFAULT_SHOW_DEV_TOOLS,
+			strictIds: DEFAULT_STRICT_IDS,
+			strictRuntime: DEFAULT_STRICT_RUNTIME,
 		},
 		null,
 		2,
@@ -113,7 +122,9 @@ export function runCli(argv: string[], deps: CliDeps): number {
 			`supports JSON imports (e.g. \`import config from "./${CONFIG_FILENAME}"\`), ` +
 			"spread its fields into createApp's second argument yourself:",
 	);
-	console.log("  createApp(draw, { ...config, storage: myStorageAdapter })");
+	console.log(
+		'  createApp(draw, { ...config, storage: myStorageAdapter, storageNamespace: "my-app" })',
+	);
 	return 0;
 }
 

@@ -3,7 +3,7 @@ node_modules/
 
 # Build outputs
 dist/
-docs/
+.typedoc/
 
 # Editors
 .idea/
@@ -27,3 +27,11 @@ coverage/
 # Local diagnostics
 core-diagnostics/
 core-diagnostics.zip
+
+# Browser test outputs
+playwright-report/
+test-results/
+tests/browser/.tmp/
+
+# Package/release artifacts
+.artifacts/

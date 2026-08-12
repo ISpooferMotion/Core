@@ -1,0 +1,11 @@
+{
+	"private": true,
+	"type": "commonjs",
+	"scripts": {
+		"verify": "node index.cjs"
+	},
+	"dependencies": {
+		"react": "19.2.8",
+		"react-dom": "19.2.8"
+	}
+}
