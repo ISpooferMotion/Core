@@ -6,5 +6,5 @@ const App = createApp(() => {}, config);
 
 if (typeof App !== "function")
 	throw new Error("createApp did not return a component.");
-if (getDevToolsProtocol() !== null)
+if (getDevToolsProtocol() !== undefined)
 	throw new Error("Node should not expose a browser DevTools protocol.");
