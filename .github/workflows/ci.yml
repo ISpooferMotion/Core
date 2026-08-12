@@ -27,7 +27,7 @@ jobs:
           set -euo pipefail
 
           ACTIONLINT_VERSION="1.7.12"
-          ARCHIVE="actionlint_${ACTIONLINT_VERSION}_linux_x86_64.tar.gz"
+          ARCHIVE="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           BASE_URL="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
 
           curl --fail --silent --show-error --location \

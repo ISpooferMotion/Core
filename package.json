@@ -31,17 +31,30 @@
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"sideEffects": [
+		"./dist/styles.css"
+	],
 	"exports": {
 		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js",
-			"require": "./dist/index.cjs"
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
 		},
 		"./styles.css": "./dist/styles.css",
 		"./devtools": {
-			"types": "./dist/devtools-entry.d.ts",
-			"import": "./dist/devtools.js",
-			"require": "./dist/devtools.cjs"
+			"import": {
+				"types": "./dist/devtools-entry.d.ts",
+				"default": "./dist/devtools.js"
+			},
+			"require": {
+				"types": "./dist/devtools-entry.d.cts",
+				"default": "./dist/devtools.cjs"
+			}
 		}
 	},
 	"files": [

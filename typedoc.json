@@ -13,5 +13,19 @@
 		"invalidLink": true,
 		"notDocumented": false
 	},
-	"treatWarningsAsErrors": true
+	"treatWarningsAsErrors": true,
+	"intentionallyNotExported": [
+		"State",
+		"DevToolsOverlayProps",
+		"FrameEntry"
+	],
+	"externalSymbolLinkMappings": {
+		"@types/react": {
+			"React.Component.render": "#",
+			"React.Component.setState": "#",
+			"React.ComponentLifecycle.componentDidMount": "#",
+			"React.NewLifecycle.getSnapshotBeforeUpdate": "#",
+			"React.StaticLifecycle.getDerivedStateFromProps": "#"
+		}
+	}
 }

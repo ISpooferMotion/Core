@@ -17,7 +17,15 @@ function run(command, args, cwd = root) {
 try {
 	run("tar", ["-xzf", tarball, "-C", temp]);
 	run("npx", ["--yes", "publint@0.3.22", extracted]);
-	run("npx", ["--yes", "@arethetypeswrong/cli@0.18.3", tarball]);
+	run("npx", [
+		"--yes",
+		"@arethetypeswrong/cli@0.18.3",
+		tarball,
+		"--profile",
+		"node16",
+		"--exclude-entrypoints",
+		"styles.css",
+	]);
 } finally {
 	await rm(temp, { recursive: true, force: true });
 }
