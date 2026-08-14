@@ -1,6 +1,4 @@
-# @ispoofermotion/core
-
-`@ispoofermotion/core` is an immediate-mode UI runtime for React, designed with Tauri applications in mind. It does not depend on Tauri, create IPC bindings, or manage native application state for you.
+An immediate-mode UI runtime for React, designed with Tauri applications in mind. It does not depend on Tauri, create IPC bindings, or manage native application state for you.
 
 The current hardened line supports React 18 and React 19, Node 22 and Node 24, and browser behavior verified in Chromium, Firefox, and WebKit.
 
