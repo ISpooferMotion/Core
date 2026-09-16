@@ -28,21 +28,6 @@ function Bomb({ shouldThrow }: { shouldThrow: boolean }) {
 	return createElement("div", { "data-testid": "ok" }, "fine");
 }
 
-function buttonNamed(name: string): HTMLButtonElement | null {
-	return (
-		Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-			(button) => button.textContent === name,
-		) ?? null
-	);
-}
-
-async function clickAndFlush(button: HTMLButtonElement | null): Promise<void> {
-	await act(async () => {
-		button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-		await Promise.resolve();
-	});
-}
-
 describe("ISMCoreErrorBoundary", () => {
 	it("renders children normally when nothing throws", () => {
 		const root = createTestRoot(container);
@@ -58,7 +43,7 @@ describe("ISMCoreErrorBoundary", () => {
 		expect(container.textContent).toContain("fine");
 	});
 
-	it("catches a thrown error and renders the fallback instead of crashing", () => {
+	it("catches a thrown error and renders null instead of crashing", () => {
 		const consoleError = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => {});
@@ -73,8 +58,12 @@ describe("ISMCoreErrorBoundary", () => {
 			);
 		});
 
-		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
-		expect(container.textContent).toContain("kaboom");
+		expect(container.innerHTML).toBe("");
+		expect(consoleError).toHaveBeenCalledWith(
+			expect.stringContaining("[ism] Widget render error"),
+			expect.any(Error),
+			expect.any(String),
+		);
 		consoleError.mockRestore();
 	});
 
@@ -121,7 +110,7 @@ describe("ISMCoreErrorBoundary", () => {
 			);
 		});
 
-		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
+		expect(container.innerHTML).toBe("");
 		expect(onDiagnostic).toHaveBeenCalledWith(
 			expect.objectContaining({
 				code: "ISM_WIDGET_RENDER_ERROR",
@@ -131,7 +120,7 @@ describe("ISMCoreErrorBoundary", () => {
 		consoleError.mockRestore();
 	});
 
-	it("falls back to Core's built-in error UI when a custom fallback throws", () => {
+	it("falls back to console logging when a custom fallback throws", () => {
 		const consoleError = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => {});
@@ -150,17 +139,17 @@ describe("ISMCoreErrorBoundary", () => {
 			);
 		});
 
-		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
-		expect(container.textContent).toContain("Widget render error");
+		expect(container.innerHTML).toBe("");
 		expect(onDiagnostic).toHaveBeenCalledWith(
 			expect.objectContaining({
 				message: expect.stringContaining("Custom error fallback threw"),
 			}),
 		);
+		expect(consoleError).toHaveBeenCalled();
 		consoleError.mockRestore();
 	});
 
-	it("reports an immediate failed retry, then recovers when the child becomes safe", async () => {
+	it("supports custom fallback with retry capability", async () => {
 		const consoleError = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => {});
@@ -169,234 +158,89 @@ describe("ISMCoreErrorBoundary", () => {
 		function Wrapper() {
 			return createElement(
 				ISMCoreErrorBoundary,
-				null,
+				{
+					renderFallback: ({ onRetry }) =>
+						createElement(
+							"button",
+							{ type: "button", onClick: onRetry },
+							"Try again",
+						),
+				},
 				createElement(Bomb, { shouldThrow }),
 			);
 		}
 
 		const root = createTestRoot(container);
 		act(() => root.render(createElement(Wrapper)));
-		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
-
-		await clickAndFlush(buttonNamed("Try again"));
-		await waitForCondition(
-			() => container.querySelector("[data-ism-retry-state='failed']") !== null,
-		);
-		expect(container.textContent).toContain("Retry failed");
-		expect(document.activeElement).toBe(buttonNamed("Try again"));
-		expect(
-			container.querySelector("[data-ism-retry-state='failed']"),
-		).not.toBeNull();
-		expect(buttonNamed("Try again")).not.toBeNull();
+		expect(container.textContent).toContain("Try again");
 
 		shouldThrow = false;
 		act(() => root.render(createElement(Wrapper)));
-		await clickAndFlush(buttonNamed("Try again"));
+		await act(async () => {
+			container
+				.querySelector("button")
+				?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+			await Promise.resolve();
+		});
+
 		await waitForCondition(
-			() => container.querySelector("[data-ism-error]") === null,
+			() => container.textContent?.includes("fine") ?? false,
 		);
-		expect(container.querySelector("[data-ism-error]")).toBeNull();
 		expect(container.textContent).toContain("fine");
 		consoleError.mockRestore();
 	});
 });
 
 describe("ErrorFallback", () => {
-	it("announces only the concise summary and hides the decorative icon", () => {
+	it("logs the error to console and renders nothing", () => {
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
 		const root = createTestRoot(container);
 		act(() => {
 			root.render(
 				createElement(ErrorFallback, {
 					title: "Something broke",
-					error: "oops",
+					error: new Error("oops"),
+					errorCode: "ISM_WIDGET_RENDER_ERROR",
 				}),
 			);
 		});
 
-		const alertEl = container.querySelector('[role="alert"]');
-		expect(alertEl).not.toBeNull();
-		expect(alertEl?.textContent).toContain("Something broke");
-		expect(alertEl?.textContent).not.toContain("oops");
-		expect(container.querySelector('[aria-hidden="true"] svg')).not.toBeNull();
-	});
-
-	it("keeps long error content accessible with viewport-bounded scrolling", () => {
-		const root = createTestRoot(container);
-		act(() => {
-			root.render(
-				createElement(ErrorFallback, {
-					title: "Long error",
-					error: new Error("x".repeat(10_000)),
-				}),
-			);
-		});
-
-		const fallback = container.querySelector<HTMLElement>("[data-ism-error]");
-		expect(fallback?.style.maxHeight).toBe("calc(100vh - 32px)");
-		expect(fallback?.style.overflowY).toBe("auto");
-		expect(fallback?.style.overflowX).toBe("hidden");
-	});
-
-	it("uses render-specific and draw-specific recovery guidance", () => {
-		const root = createTestRoot(container);
-		act(() => {
-			root.render(
-				createElement(ErrorFallback, {
-					title: "Render error",
-					error: "x",
-					kind: "render",
-				}),
-			);
-		});
-		expect(container.textContent).toContain("widget render function");
-
-		act(() => {
-			root.render(
-				createElement(ErrorFallback, {
-					title: "Draw error",
-					error: "x",
-					kind: "draw",
-				}),
-			);
-		});
-		expect(container.textContent).toContain("draw function");
-	});
-
-	it("keeps technical details collapsed by default while retaining the stack", () => {
-		const root = createTestRoot(container);
-		act(() => {
-			root.render(
-				createElement(ErrorFallback, {
-					title: "t",
-					error: new Error("with stack"),
-				}),
-			);
-		});
-		const details = container.querySelector("details");
-		expect(details).not.toBeNull();
-		expect(details?.hasAttribute("open")).toBe(false);
-		expect(container.textContent).toContain("Technical details");
-		expect(container.textContent).toContain("with stack");
-	});
-
-	it("gives immediate retry feedback before calling the recovery callback", async () => {
-		const onRetry = vi.fn();
-		const root = createTestRoot(container);
-		act(() => {
-			root.render(
-				createElement(ErrorFallback, { title: "t", error: "x", onRetry }),
-			);
-		});
-
-		const button = buttonNamed("Try again");
-		act(() => {
-			button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-		});
-		expect(container.textContent).toContain("Retrying...");
-		expect(onRetry).not.toHaveBeenCalled();
-
-		await waitForCondition(() => onRetry.mock.calls.length === 1);
-		expect(onRetry).toHaveBeenCalledTimes(1);
-	});
-
-	it("reports a rejected retry callback and restores retry focus", async () => {
-		const onRetry = vi.fn(async () => {
-			throw new Error("retry callback failed");
-		});
-		const root = createTestRoot(container);
-		act(() => {
-			root.render(
-				createElement(ErrorFallback, { title: "t", error: "x", onRetry }),
-			);
-		});
-
-		await clickAndFlush(buttonNamed("Try again"));
-		await waitForCondition(() => {
-			const retryButton = buttonNamed("Try again");
-			return (
-				(container.textContent?.includes("recovery callback threw") ?? false) &&
-				retryButton !== null &&
-				document.activeElement === retryButton
-			);
-		});
-		expect(onRetry).toHaveBeenCalledTimes(1);
-		expect(buttonNamed("Try again")).toBe(document.activeElement);
-	});
-
-	it("shows copy failure feedback when clipboard access rejects", async () => {
-		const originalClipboard = Object.getOwnPropertyDescriptor(
-			navigator,
-			"clipboard",
+		expect(container.innerHTML).toBe("");
+		expect(consoleError).toHaveBeenCalledWith(
+			expect.stringContaining(
+				"[ism] Something broke (ISM_WIDGET_RENDER_ERROR)",
+			),
+			expect.any(Error),
+			expect.any(String),
 		);
-		const writeText = vi.fn(async () => {
-			throw new Error("clipboard rejected");
-		});
-		Object.defineProperty(navigator, "clipboard", {
-			value: { writeText },
-			configurable: true,
-		});
-
-		try {
-			const root = createTestRoot(container);
-			act(() => {
-				root.render(createElement(ErrorFallback, { title: "t", error: "x" }));
-			});
-
-			await clickAndFlush(buttonNamed("Copy details"));
-			await waitForCondition(() => buttonNamed("Copy failed") !== null);
-			expect(writeText).toHaveBeenCalledTimes(1);
-		} finally {
-			if (originalClipboard) {
-				Object.defineProperty(navigator, "clipboard", originalClipboard);
-			} else {
-				Reflect.deleteProperty(navigator, "clipboard");
-			}
-		}
+		consoleError.mockRestore();
 	});
 
-	it("copies diagnostics without leaking hidden production details", async () => {
-		const originalClipboard = Object.getOwnPropertyDescriptor(
-			navigator,
-			"clipboard",
-		);
-		const writeText = vi.fn(async (_text: string) => {});
-		Object.defineProperty(navigator, "clipboard", {
-			value: { writeText },
-			configurable: true,
+	it("hides detailed message in console when showErrorDetails is false", () => {
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const root = createTestRoot(container);
+		act(() => {
+			root.render(
+				createElement(ErrorFallback, {
+					title: "Production error",
+					error: new Error("secret filesystem path C:/private/source.ts"),
+					errorCode: "ISM_WIDGET_RENDER_ERROR",
+					showErrorDetails: false,
+				}),
+			);
 		});
 
-		try {
-			const root = createTestRoot(container);
-			act(() => {
-				root.render(
-					createElement(ErrorFallback, {
-						title: "Production error",
-						error: new Error("secret path C:/private/source.ts"),
-						showErrorDetails: false,
-						errorCode: "ISM_WIDGET_RENDER_ERROR",
-					}),
-				);
-			});
-
-			await act(async () => {
-				buttonNamed("Copy details")?.dispatchEvent(
-					new MouseEvent("click", { bubbles: true }),
-				);
-				await Promise.resolve();
-			});
-
-			expect(writeText).toHaveBeenCalledTimes(1);
-			const copied = writeText.mock.calls[0]?.[0] ?? "";
-			expect(copied).toContain("ISM Core 4.1.1");
-			expect(copied).toContain("ISM_WIDGET_RENDER_ERROR");
-			expect(copied).not.toContain("secret path");
-		} finally {
-			if (originalClipboard) {
-				Object.defineProperty(navigator, "clipboard", originalClipboard);
-			} else {
-				Reflect.deleteProperty(navigator, "clipboard");
-			}
-		}
+		expect(container.innerHTML).toBe("");
+		expect(consoleError).toHaveBeenCalledWith(
+			expect.stringContaining("Core could not render the current widget tree."),
+			expect.any(Error),
+			expect.any(String),
+		);
+		consoleError.mockRestore();
 	});
 });
 
@@ -417,30 +261,6 @@ describe("production-safe error disclosure", () => {
 	it("fails closed when NODE_ENV is unknown", () => {
 		vi.stubGlobal("process", { env: {} });
 		expect(shouldShowErrorDetailsByDefault()).toBe(false);
-	});
-
-	it("hides sensitive message and stack details when showErrorDetails is false", () => {
-		const root = createTestRoot(container);
-		const secretError = new Error(
-			"secret filesystem path C:/private/source.ts",
-		);
-		act(() => {
-			root.render(
-				createElement(ErrorFallback, {
-					title: "Production error",
-					error: secretError,
-					errorCode: "ISM_WIDGET_RENDER_ERROR",
-					showErrorDetails: false,
-				}),
-			);
-		});
-		expect(container.textContent).toContain(
-			"Core could not render the current widget tree.",
-		);
-		expect(container.textContent).toContain("Error code");
-		expect(container.textContent).toContain("ISM_WIDGET_RENDER_ERROR");
-		expect(container.textContent).not.toContain("secret filesystem path");
-		expect(container.querySelector("details")).toBeNull();
 	});
 
 	it("emits the stable code carried by an ISMError", () => {

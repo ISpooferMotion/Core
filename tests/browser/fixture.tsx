@@ -1,8 +1,9 @@
-import { createElement, StrictMode } from "react";
+import { createElement, StrictMode, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import {
 	createApp,
 	defineWidget,
+	type ErrorFallbackContext,
 	type IsmApp,
 	makeInteractive,
 	type StorageAdapter,
@@ -241,10 +242,66 @@ function mountDevTools(): void {
 	mount(App);
 }
 
+function RecoveryFallback({
+	context,
+	retryFailed,
+	onRetry,
+}: {
+	context: ErrorFallbackContext;
+	retryFailed: boolean;
+	onRetry: () => void;
+}) {
+	const buttonRef = useRef<HTMLButtonElement | null>(null);
+	useEffect(() => {
+		if (retryFailed) {
+			buttonRef.current?.focus();
+		}
+	}, [retryFailed]);
+
+	return createElement(
+		"div",
+		{
+			"data-ism-error": "",
+			"data-ism-error-code": context.errorCode,
+			"data-ism-retry-state": retryFailed ? "failed" : "idle",
+			role: "alert",
+		},
+		createElement(
+			"h2",
+			null,
+			context.showErrorDetails
+				? context.error instanceof Error
+					? context.error.message
+					: String(context.error)
+				: context.errorCode,
+		),
+		createElement("p", null, retryFailed ? "Retry failed" : ""),
+		createElement(
+			"button",
+			{
+				ref: buttonRef,
+				type: "button",
+				onClick: onRetry,
+			},
+			"Try again",
+		),
+	);
+}
+
 function mountErrorRecovery(showErrorDetails = true): void {
 	failWidgetRender = false;
+	let retryFailed = false;
 	const App = createApp(() => FaultyCounter("Recoverable counter"), {
 		showErrorDetails,
+		renderErrorFallback: (context) =>
+			createElement(RecoveryFallback, {
+				context,
+				retryFailed,
+				onRetry: () => {
+					if (failWidgetRender) retryFailed = true;
+					context.onRetry?.();
+				},
+			}),
 	});
 	mount(App);
 	window.__ismFixture = {
@@ -255,6 +312,7 @@ function mountErrorRecovery(showErrorDetails = true): void {
 		},
 		recover: () => {
 			failWidgetRender = false;
+			retryFailed = false;
 		},
 	};
 }

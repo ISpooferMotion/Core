@@ -320,7 +320,12 @@ describe("createApp", () => {
 			root.render(createElement(App));
 		});
 
-		expect(container.textContent).toContain("strictIds");
+		expect(container.innerHTML).toBe("");
+		expect(consoleError).toHaveBeenCalledWith(
+			expect.stringContaining("strictIds"),
+			expect.any(Error),
+			expect.any(String),
+		);
 		consoleError.mockRestore();
 	});
 
@@ -357,48 +362,46 @@ describe("createApp", () => {
 		);
 	});
 
-	it("shows draw retry feedback, reports an immediate re-failure, and then recovers", async () => {
+	it("supports draw retry through custom fallback, and then recovers", async () => {
 		const consoleError = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => {});
 		let shouldThrow = true;
 
-		const App = createApp(() => {
-			if (shouldThrow) throw new Error("draw exploded");
-			Text("recovered");
-		});
+		const App = createApp(
+			() => {
+				if (shouldThrow) throw new Error("draw exploded");
+				Text("recovered");
+			},
+			{
+				renderErrorFallback: ({ onRetry }) =>
+					createElement(
+						"button",
+						{ type: "button", onClick: onRetry },
+						"Try again",
+					),
+			},
+		);
 		const root = createTestRoot(container);
 		act(() => root.render(createElement(App)));
 
-		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
-		expect(container.textContent).toContain("draw exploded");
-
-		await act(async () => {
-			Array.from(container.querySelectorAll("button"))
-				.find((button) => button.textContent === "Try again")
-				?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-		});
-		await waitForCondition(
-			() => container.querySelector("[data-ism-retry-state='failed']") !== null,
-		);
-		expect(container.textContent).toContain("Retry failed");
+		expect(container.textContent).toContain("Try again");
 
 		shouldThrow = false;
 		await act(async () => {
-			Array.from(container.querySelectorAll("button"))
-				.find((button) => button.textContent === "Try again")
+			container
+				.querySelector("button")
 				?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 		});
 		await waitForCondition(
-			() => container.querySelector("[data-ism-error]") === null,
+			() => container.textContent?.includes("recovered") ?? false,
 		);
 
-		expect(container.querySelector("[data-ism-error]")).toBeNull();
 		expect(container.textContent).toContain("recovered");
 		consoleError.mockRestore();
 	});
 
-	it("restores the built-in draw fallback when a custom fallback throws", () => {
+	it("restores console error logging when a custom fallback throws", () => {
 		const consoleError = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => {});
@@ -417,13 +420,13 @@ describe("createApp", () => {
 		const root = createTestRoot(container);
 		act(() => root.render(createElement(App)));
 
-		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
-		expect(container.textContent).toContain("Draw function error");
+		expect(container.innerHTML).toBe("");
 		expect(onDiagnostic).toHaveBeenCalledWith(
 			expect.objectContaining({
 				message: expect.stringContaining("Custom error fallback threw"),
 			}),
 		);
+		expect(consoleError).toHaveBeenCalled();
 		consoleError.mockRestore();
 	});
 
@@ -452,7 +455,14 @@ describe("createApp", () => {
 			getReturnValue: () => undefined,
 		});
 
-		const App = createApp(() => Stateful());
+		const App = createApp(() => Stateful(), {
+			renderErrorFallback: ({ onRetry }) =>
+				createElement(
+					"button",
+					{ type: "button", onClick: onRetry },
+					"Try again",
+				),
+		});
 		const root = createTestRoot(container);
 		await act(async () => {
 			root.render(createElement(App));
@@ -466,20 +476,18 @@ describe("createApp", () => {
 			await Promise.resolve();
 		});
 
-		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
-		expect(container.textContent).toContain("widget exploded");
+		expect(container.textContent).toContain("Try again");
 
 		shouldThrow = false;
 		await act(async () => {
-			Array.from(container.querySelectorAll("[data-ism-error] button"))
-				.find((button) => button.textContent === "Try again")
+			container
+				.querySelector("button")
 				?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 		});
 		await waitForCondition(
-			() => container.querySelector("[data-ism-error]") === null,
+			() => container.querySelector("[data-count='1']") !== null,
 		);
 
-		expect(container.querySelector("[data-ism-error]")).toBeNull();
 		expect(container.querySelector("[data-count='1']")).not.toBeNull();
 		expect(container.textContent).toContain("count: 1");
 
@@ -546,12 +554,22 @@ describe("createApp", () => {
 		let throwAfterClick = true;
 		const observations: boolean[] = [];
 
-		const App = createApp(() => {
-			const clicked = Button("Transactional click");
-			observations.push(clicked);
-			if (clicked && throwAfterClick) throw new Error("abort this frame");
-			Text(clicked ? "clicked committed" : "idle");
-		});
+		const App = createApp(
+			() => {
+				const clicked = Button("Transactional click");
+				observations.push(clicked);
+				if (clicked && throwAfterClick) throw new Error("abort this frame");
+				Text(clicked ? "clicked committed" : "idle");
+			},
+			{
+				renderErrorFallback: ({ onRetry }) =>
+					createElement(
+						"button",
+						{ type: "button", onClick: onRetry },
+						"Try again",
+					),
+			},
+		);
 
 		const root = createTestRoot(container);
 		await act(async () => {
@@ -565,12 +583,12 @@ describe("createApp", () => {
 			await Promise.resolve();
 		});
 
-		expect(container.querySelector("[data-ism-error]")).not.toBeNull();
+		expect(container.textContent).toContain("Try again");
 		throwAfterClick = false;
 
 		await act(async () => {
 			container
-				.querySelector("[data-ism-error] button")
+				.querySelector("button")
 				?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 			await Promise.resolve();
 		});
@@ -725,8 +743,13 @@ describe("useReactContext", () => {
 			root.render(createElement(App));
 		});
 
-		expect(container.textContent).toContain(
-			"useReactContext() cannot be called inside memoBlock()",
+		expect(container.innerHTML).toBe("");
+		expect(consoleError).toHaveBeenCalledWith(
+			expect.stringContaining(
+				"useReactContext() cannot be called inside memoBlock()",
+			),
+			expect.any(Error),
+			expect.any(String),
 		);
 
 		consoleError.mockRestore();
@@ -759,7 +782,10 @@ describe("useReactContext", () => {
 });
 
 describe("createApp diagnostics and production error handling", () => {
-	it("emits a coded draw diagnostic while hiding details when configured", () => {
+	it("redacts draw error details when showErrorDetails is false", () => {
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
 		const onDiagnostic = vi.fn();
 		const App = createApp(
 			() => {
@@ -772,17 +798,18 @@ describe("createApp diagnostics and production error handling", () => {
 			root.render(createElement(App));
 		});
 
-		const fallback = container.querySelector("[data-ism-error]");
-		expect(fallback?.getAttribute("data-ism-error-code")).toBe(
-			"ISM_DRAW_ERROR",
+		expect(container.innerHTML).toBe("");
+		expect(consoleError).toHaveBeenCalledWith(
+			expect.stringContaining(
+				"Core could not complete the current draw frame.",
+			),
+			expect.any(Error),
+			expect.any(String),
 		);
-		expect(container.textContent).toContain(
-			"Core could not complete the current draw frame.",
-		);
-		expect(container.textContent).not.toContain("secret draw details");
 		expect(onDiagnostic).toHaveBeenCalledWith(
 			expect.objectContaining({ code: "ISM_DRAW_ERROR", level: "error" }),
 		);
+		consoleError.mockRestore();
 	});
 
 	it("supports a custom fallback for draw failures", () => {
