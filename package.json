@@ -4,6 +4,14 @@
 	"description": "Immediate-mode UI runtime for React, designed with Tauri applications in mind.",
 	"private": false,
 	"license": "UNLICENSED",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ISpooferMotion/Core.git"
+	},
+	"bugs": {
+		"url": "https://github.com/ISpooferMotion/Core/issues"
+	},
+	"homepage": "https://github.com/ISpooferMotion/Core#readme",
 	"keywords": [
 		"immediate-mode",
 		"ui",
