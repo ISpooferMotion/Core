@@ -95,11 +95,9 @@ function CloseIcon(): ReactNode {
 
 export interface DevToolsOverlayProps {
 	runtime: Runtime;
-	/** Stacking level supplied by the app rather than hard-coded by DevTools. */
 	zIndex: number;
 }
 
-/** Lazily loaded React inspector used by `createApp({ showDevTools: true })`. */
 export function DevToolsOverlay({
 	runtime,
 	zIndex,

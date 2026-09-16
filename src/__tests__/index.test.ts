@@ -408,6 +408,36 @@ describe("memoBlock", () => {
 		expect(executionCount).toBe(2);
 	});
 
+	it("treats NaN dependencies as equal across passes", () => {
+		let executionCount = 0;
+		drawPass(() => {
+			memoBlock("nan-test", [Number.NaN], () => {
+				executionCount++;
+			});
+		});
+		drawPass(() => {
+			memoBlock("nan-test", [Number.NaN], () => {
+				executionCount++;
+			});
+		});
+		expect(executionCount).toBe(1);
+	});
+
+	it("distinguishes +0 and -0 dependencies across passes", () => {
+		let executionCount = 0;
+		drawPass(() => {
+			memoBlock("zero-test", [0], () => {
+				executionCount++;
+			});
+		});
+		drawPass(() => {
+			memoBlock("zero-test", [-0], () => {
+				executionCount++;
+			});
+		});
+		expect(executionCount).toBe(2);
+	});
+
 	it("snapshots a mutable dependency array", () => {
 		let executions = 0;
 		const dependencies = [1];

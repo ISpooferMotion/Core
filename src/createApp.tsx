@@ -29,11 +29,6 @@ const LazyDevToolsOverlay = lazy(async () => {
 	return { default: module.DevToolsOverlay };
 });
 
-/**
- * Render one frame entry and its children.
- *
- * @internal
- */
 function renderEntry(runtime: Runtime, entry: FrameEntry): ReactNode {
 	const setState = (updater: unknown) => {
 		runtime.setState(entry.id, updater, entry.persistence ?? false);
@@ -91,12 +86,6 @@ function renderEntry(runtime: Runtime, entry: FrameEntry): ReactNode {
 	);
 }
 
-/**
- * Convert the frame buffer into a React tree.
- * Named layers are wrapped separately so their z index can be applied.
- *
- * @internal
- */
 function renderFrameBuffer(
 	runtime: Runtime,
 	layers: Map<string, FrameEntry[]>,
@@ -149,13 +138,6 @@ function renderFrameBuffer(
 	);
 }
 
-/**
- * Read a React context from the draw function passed to `createApp`.
- *
- * This calls React's `useContext` directly, so the normal Rules of Hooks still
- * apply. Call it on every frame and in the same order. Do not place it inside
- * a condition or inside `memoBlock`, since a memo cache hit can skip the call.
- */
 export function useReactContext<T>(context: React.Context<T>): T {
 	const runtime = getActiveRuntimeOrNull();
 	if (runtime?.isCapturingMemo()) {
@@ -167,82 +149,27 @@ export function useReactContext<T>(context: React.Context<T>): T {
 	return useContext(context);
 }
 
-/**
- * Options accepted by {@link createApp}.
- *
- * @since 3.2.0
- */
 export interface AppOptions extends IsmConfig {
-	/** Synchronous storage used by widgets with `persistent: true`. */
 	storage?: StorageAdapter;
-	/** Stable application namespace used to isolate persistent storage keys. */
 	storageNamespace?: string;
-	/** Receive recoverable adapter, serialization, validation, or migration failures. */
 	onStorageError?: (failure: StorageFailure) => void;
-	/** Receive every structured runtime diagnostic. */
 	onDiagnostic?: errors.DiagnosticSink;
-	/** Receive draw and widget-render errors. */
 	onError?: (error: Error, info?: ErrorInfo) => void;
-	/** Replace the built-in draw/render error panel. */
 	renderErrorFallback?: (context: ErrorFallbackContext) => ReactNode;
-	/** Reveal messages/stacks in the error panel. Defaults off in production. */
 	showErrorDetails?: boolean;
 }
 
-/** App-local controls attached to the component returned by {@link createApp}. */
 export interface AppHandle {
-	/** Request another frame only for runtimes created by this app factory. */
 	markDirty(): void;
-	/** Set or clear focus within this app. Returns false when no local runtime can own the ID. */
 	setFocus(id: string | null): boolean;
-	/** Check focus within this app without consulting unrelated app roots. */
 	isFocused(id: string): boolean;
-	/** Return this app's focused logical ID, or null when none is focused/mounted. */
 	getFocusedId(): string | null;
-	/** Reset a live widget to its declared default state. */
 	resetState(id: string): boolean;
-	/** Clear persistence for persistent widgets known to this app. */
 	clearPersistentState(): number;
-	/** Clear every storage key under this app's stable namespace. */
 	clearStorageNamespace(): number;
 }
 
-/** React component plus app-local runtime controls. */
 export type IsmApp = React.FC & AppHandle;
-
-/**
- * Create the React component that runs an immediate mode draw function.
- *
- * Each render records and prepares a speculative frame, then converts the
- * recorded widgets into React elements. Runtime-owned changes become committed
- * only after React commits that render; abandoned frames are aborted. The
- * returned component owns its runtime and clears that runtime when it unmounts.
- *
- * Widget calls belong inside `drawFn`. `useReactContext` is the only supported
- * React hook in that function, and it must follow the normal Rules of Hooks.
- *
- * @param drawFn Function that describes one UI frame.
- * @param options Runtime configuration and optional storage.
- * @returns A React component ready to mount.
- *
- * @since 1.0.0
- *
- * @example
- * ```ts
- * import { createApp } from "@ispoofermotion/core";
- * import { Button, Text } from "./widgets";
- *
- * function draw() {
- *   Text("Settings");
- *   Button("Save");
- * }
- *
- * const App = createApp(draw);
- * ```
- *
- * Keep irreversible external side effects out of `drawFn`. Runtime-owned
- * speculative changes are committed only after React commits the frame.
- */
 
 export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 	const config = resolveConfig(options);
@@ -271,8 +198,6 @@ export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 		);
 		const lastSuccessfulRetryAttempt = useRef(0);
 
-		// Record the current frame as plain runtime data. withRuntime always
-		// restores the previous active runtime, including on failure.
 		let drawError: Error | null = null;
 		let frameTransactionId: number | null = null;
 
@@ -309,8 +234,6 @@ export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 			}
 		});
 
-		// Runtime mutations made while drawing remain speculative until React
-		// commits this render. Abandoned/replayed renders never run this effect.
 		useLayoutEffect(() => {
 			if (frameTransactionId !== null && drawError === null) {
 				runtime.commitFrame(frameTransactionId);
@@ -367,8 +290,6 @@ export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 
 	ISMCoreRenderer.displayName = "ISMCoreRenderer";
 
-	// Own the Runtime above the error boundary. Replacing a failed renderer with
-	// the boundary fallback must never destroy the application's committed state.
 	function ISMCoreApp() {
 		const runtime = useMemo(
 			() =>
@@ -447,8 +368,10 @@ export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 			const candidate = runtime.getFocusedId();
 			if (candidate === null) continue;
 			if (focused !== null && focused !== candidate) {
-				throw new Error(
+				throw errors.createISMError(
+					"ISM_CROSS_RUNTIME_ID_COLLISION",
 					"[ism] This createApp component is mounted more than once with different focused widgets.",
+					{ details: { firstFocused: focused, secondFocused: candidate } },
 				);
 			}
 			focused = candidate;

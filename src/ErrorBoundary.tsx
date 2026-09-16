@@ -3,7 +3,6 @@ import { Component, createElement, useEffect, useRef, useState } from "react";
 import * as errors from "./errors";
 import { CORE_VERSION } from "./version";
 
-/** Context passed to a custom application error fallback. */
 export interface ErrorFallbackContext {
 	title: string;
 	error: Error;
@@ -11,20 +10,15 @@ export interface ErrorFallbackContext {
 	kind: "render" | "draw";
 	errorCode: errors.ISMErrorCode;
 	showErrorDetails: boolean;
-	/** True when the latest recovery attempt immediately failed again. */
 	retryFailed?: boolean;
 	onRetry?: () => void | Promise<void>;
 }
 
 export interface ISMCoreErrorBoundaryProps {
 	children: ReactNode;
-	/** Called after the boundary catches a render error. */
 	onError?: (error: Error, info: ErrorInfo) => void;
-	/** Render a consumer-defined replacement instead of the built-in fallback. */
 	renderFallback?: (context: ErrorFallbackContext) => ReactNode;
-	/** Include message/stack/component details in the built-in fallback. */
 	showErrorDetails?: boolean;
-	/** Receive the structured render failure diagnostic. */
 	onDiagnostic?: errors.DiagnosticSink;
 }
 
@@ -35,13 +29,6 @@ interface State {
 	retryFailed: boolean;
 }
 
-/**
- * Default detailed-error policy.
- *
- * Details are shown only when a Node-style environment explicitly identifies
- * itself as non-production. Unknown/browser environments fail closed so a
- * missing `process` shim can never accidentally expose stack traces.
- */
 export function shouldShowErrorDetailsByDefault(): boolean {
 	return (
 		typeof process !== "undefined" &&
@@ -216,15 +203,10 @@ export interface ErrorFallbackProps {
 	title: string;
 	error: Error | string;
 	info?: ErrorInfo;
-	/** Select the tips shown for this error source. */
 	kind?: "render" | "draw";
-	/** Stable code displayed even when sensitive details are hidden. */
 	errorCode?: errors.ISMErrorCode;
-	/** Hide messages/stacks in production-safe mode. */
 	showErrorDetails?: boolean;
-	/** Indicates that the latest retry immediately reached an error again. */
 	retryFailed?: boolean;
-	/** Show a retry button when a recovery callback is available. */
 	onRetry?: () => void | Promise<void>;
 }
 
@@ -370,7 +352,6 @@ function ErrorIcon(): ReactNode {
 	);
 }
 
-/** Render the error panel used for draw and widget render failures. */
 export function ErrorFallback({
 	title,
 	error,
@@ -424,9 +405,6 @@ export function ErrorFallback({
 		setIsRetrying(true);
 		if (timer.current !== null) clearTimeout(timer.current);
 
-		// Give the pressed/retrying state a chance to paint before the recovery
-		// render begins. This avoids a successful or immediate re-failure looking
-		// like the button never reacted.
 		timer.current = setTimeout(() => {
 			timer.current = null;
 			if (!mounted.current) return;
@@ -665,12 +643,6 @@ function CustomFallbackRenderer({
 	return renderFallback(context);
 }
 
-/**
- * Render a consumer fallback behind a second safety boundary so an error in the
- * custom fallback itself can never replace Core's last-resort error UI.
- *
- * @internal
- */
 export function SafeErrorFallback({
 	context,
 	renderFallback,
@@ -685,7 +657,6 @@ export function SafeErrorFallback({
 	);
 }
 
-/** React error boundary used by `@ispoofermotion/core` apps. */
 export class ISMCoreErrorBoundary extends Component<
 	ISMCoreErrorBoundaryProps,
 	State
@@ -782,6 +753,3 @@ export class ISMCoreErrorBoundary extends Component<
 		return this.props.children;
 	}
 }
-
-/** @deprecated Since 3.0.0. Use `ISMCoreErrorBoundary`. */
-export { ISMCoreErrorBoundary as ISMLibErrorBoundary };

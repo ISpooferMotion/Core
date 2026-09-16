@@ -1,17 +1,15 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { relative, resolve } from "node:path";
-import { createPublishStage } from "./package-utils.mjs";
+import { createPublishStage, runCommandSync } from "./package-utils.mjs";
 
 const root = process.cwd();
 
 function run(command, args) {
-	const result = spawnSync(command, args, {
+	const result = runCommandSync(command, args, {
 		cwd: root,
 		stdio: "inherit",
-		shell: true,
 	});
 	if (result.status !== 0) {
 		console.error(
@@ -50,7 +48,7 @@ async function hashManifest(base) {
 async function packSnapshot(stageDir) {
 	const destination = await mkdtemp(resolve(tmpdir(), "ism-pack-"));
 	try {
-		const result = spawnSync(
+		const result = runCommandSync(
 			"npm",
 			[
 				"pack",
@@ -64,7 +62,6 @@ async function packSnapshot(stageDir) {
 				cwd: root,
 				encoding: "utf8",
 				stdio: ["ignore", "pipe", "inherit"],
-				shell: true,
 			},
 		);
 		if (result.status !== 0) {

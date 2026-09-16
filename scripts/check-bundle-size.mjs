@@ -22,8 +22,6 @@ async function read(path) {
 
 function findStaticImports(source) {
 	const imports = new Set();
-	// Only recognize actual ESM declarations. Searching every occurrence of
-	// `import` also matches documentation strings in bundled CLI output.
 	const pattern =
 		/(?:^|\n)\s*(?:import|export)\s+(?:(?:[^"'`]*?)\s+from\s+)?["'](\.[^"']+)["'];?/g;
 	for (const match of source.matchAll(pattern)) {
@@ -53,8 +51,6 @@ async function collectStaticGraph(entry) {
 		}
 	}
 
-	// Separators keep concatenated source tokens from affecting compression in an
-	// unrealistic way while still measuring shared static chunks exactly once.
 	return Buffer.concat(chunks.flatMap((chunk) => [chunk, Buffer.from("\n")]));
 }
 

@@ -1,5 +1,3 @@
-/// <reference types="node" />
-
 import { defineConfig } from "@playwright/test";
 
 const isCi = Boolean(process.env.CI);

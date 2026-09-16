@@ -8,8 +8,6 @@ import type {
 	WidgetRenderProps,
 } from "./types";
 
-// Widget name rules
-
 const VALID_WIDGET_NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 function validateWidgetName(name: string): void {
@@ -137,8 +135,6 @@ function resolvePersistenceOptions<S, A extends unknown[], R>(
 	};
 }
 
-// Shared widget props
-
 function populateWidgetProps<A extends unknown[]>(
 	props: WidgetProps,
 	widgetName: string,
@@ -178,44 +174,6 @@ function populateWidgetProps<A extends unknown[]>(
 	}
 }
 
-/**
- * Define a widget type and return the function used during a draw pass.
- *
- * Every call creates a frame entry with a stable ID, reads the current state,
- * builds the common DOM props, and returns the value from `getReturnValue`.
- * Scoped widgets stay open until {@link end} is called.
- *
- * @typeParam S Widget state.
- * @typeParam A Widget argument tuple.
- * @typeParam R Value returned by the widget call.
- *
- * @param config Widget definition.
- * @returns A callable widget function.
- *
- * @since 1.0.0
- *
- * @example
- * ```ts
- * const Button = defineWidget<{ clicked: boolean }, [label: string], boolean>({
- *   name: "Button",
- *   defaultState: { clicked: false },
- *   a11y: { role: "button", label: ([label]) => label },
- *   render: ({ id, args, setState, widgetProps }) =>
- *     createElement(
- *       "button",
- *       {
- *         key: id,
- *         type: "button",
- *         ...widgetProps,
- *         onClick: () => setState({ clicked: true }),
- *       },
- *       args[0],
- *     ),
- *   getReturnValue: (state) => state.clicked,
- *   consumeState: (state) => ({ ...state, clicked: false }),
- * });
- * ```
- */
 export function defineWidget<S, A extends unknown[], R>(
 	config: WidgetConfig<S, A, R>,
 ): (...args: A) => R {

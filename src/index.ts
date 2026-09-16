@@ -1,47 +1,3 @@
-/**
- * Immediate mode UI runtime for React.
- *
- * @packageDocumentation
- *
- * `createApp` runs a draw function and turns widget calls into a React tree.
- * `defineWidget` creates typed widgets with stable state and IDs.
- *
- * ## Quick start
- *
- * ```tsx
- * import { createApp, defineWidget } from "@ispoofermotion/core";
- * import "@ispoofermotion/core/styles.css";
- * import { createElement } from "react";
- *
- * const Counter = defineWidget<number, [label: string], void>({
- *   name: "Counter",
- *   defaultState: 0,
- *   render: ({ state, args, setState, widgetProps }) =>
- *     createElement(
- *       "button",
- *       {
- *         type: "button",
- *         ...widgetProps,
- *         onClick: () => setState((value) => value + 1),
- *       },
- *       `${args[0]}: ${state}`,
- *     ),
- *   getReturnValue: () => undefined,
- * });
- *
- * function draw() {
- *   Counter("Count");
- * }
- *
- * const App = createApp(draw);
- * ```
- *
- * Keep irreversible external side effects out of the draw pass. Runtime-owned
- * speculative state is committed only after React commits the frame.
- *
- * @since 1.0.0
- */
-
 export type { IsmConfig, LayerMode } from "./config";
 export {
 	DEFAULT_LAYER_MODE,
@@ -63,7 +19,6 @@ export type {
 export {
 	ErrorFallback,
 	ISMCoreErrorBoundary,
-	ISMLibErrorBoundary,
 } from "./ErrorBoundary";
 export type {
 	DiagnosticLevel,
@@ -95,16 +50,6 @@ import {
 } from "./runtime";
 import type { FrameEntry } from "./types";
 
-/**
- * Add a stable segment to widget IDs created after this call.
- *
- * Pair every call with {@link popId}. This is useful in loops where multiple
- * widgets have the same type and visible label.
- *
- * @param id Stable value for this part of the tree.
- *
- * @since 1.0.0
- */
 export function pushId(id: string): void {
 	const runtime = getActiveRuntime();
 
@@ -118,11 +63,6 @@ export function pushId(id: string): void {
 	runtime.pushIdSegment(id);
 }
 
-/**
- * Remove the latest ID segment added by {@link pushId}.
- *
- * @since 1.0.0
- */
 export function popId(): void {
 	const runtime = getActiveRuntime();
 
@@ -136,7 +76,6 @@ export function popId(): void {
 	runtime.popIdSegment();
 }
 
-/** Run a draw closure under one stable ID segment and always restore the stack. */
 export function withId<T>(id: string, drawClosure: () => T): T {
 	pushId(id);
 	try {
@@ -146,11 +85,6 @@ export function withId<T>(id: string, drawClosure: () => T): T {
 	}
 }
 
-/**
- * Add a value to the draw context stack for `key`.
- *
- * @since 2.0.0
- */
 export function pushContext<T>(key: string, value: T): void {
 	const runtime = getActiveRuntime();
 
@@ -164,11 +98,6 @@ export function pushContext<T>(key: string, value: T): void {
 	runtime.pushContext(key, value);
 }
 
-/**
- * Remove the latest draw context value for `key`.
- *
- * @since 2.0.0
- */
 export function popContext(key: string): void {
 	const runtime = getActiveRuntime();
 
@@ -182,11 +111,6 @@ export function popContext(key: string): void {
 	runtime.popContext(key);
 }
 
-/**
- * Read the latest draw context value for `key`.
- *
- * @since 2.0.0
- */
 export function getContext<T>(key: string): T | undefined {
 	const runtime = getActiveRuntime();
 
@@ -200,7 +124,6 @@ export function getContext<T>(key: string): T | undefined {
 	return runtime.getContext<T>(key);
 }
 
-/** Run a draw closure with one context value and always restore the stack. */
 export function withContext<T, R>(
 	key: string,
 	value: T,
@@ -214,11 +137,6 @@ export function withContext<T, R>(
 	}
 }
 
-/**
- * Send following widgets to a named render layer.
- *
- * @since 2.0.0
- */
 export function pushLayer(layerName: string): void {
 	const runtime = getActiveRuntime();
 
@@ -232,11 +150,6 @@ export function pushLayer(layerName: string): void {
 	runtime.pushLayer(layerName);
 }
 
-/**
- * Return to the previous render layer.
- *
- * @since 2.0.0
- */
 export function popLayer(): void {
 	const runtime = getActiveRuntime();
 
@@ -250,7 +163,6 @@ export function popLayer(): void {
 	runtime.popLayer();
 }
 
-/** Run a draw closure in one named layer and always restore the layer stack. */
 export function withLayer<T>(layerName: string, drawClosure: () => T): T {
 	pushLayer(layerName);
 	try {
@@ -266,7 +178,7 @@ function shallowEqual(a: readonly unknown[], b: readonly unknown[]): boolean {
 	}
 
 	for (let index = 0; index < a.length; index++) {
-		if (a[index] !== b[index]) {
+		if (!Object.is(a[index], b[index])) {
 			return false;
 		}
 	}
@@ -274,18 +186,6 @@ function shallowEqual(a: readonly unknown[], b: readonly unknown[]): boolean {
 	return true;
 }
 
-/**
- * Reuse a widget subtree while its dependency values stay equal.
- *
- * The closure runs again when a dependency changes or the cached IDs can no
- * longer be inserted safely. React hooks must not be called inside it.
- *
- * @param id Stable name for this memo block.
- * @param deps Values checked with shallow equality.
- * @param drawClosure Function that records the subtree.
- *
- * @since 2.0.0
- */
 export function memoBlock(
 	id: string,
 	deps: readonly unknown[],
@@ -325,13 +225,6 @@ export function memoBlock(
 	runtime.setMemo(identity.cacheKey, deps, subtree);
 }
 
-/**
- * Set the focused widget ID.
- *
- * Pass `null` to clear focus.
- *
- * @since 2.0.0
- */
 export function setFocus(id: string | null): void {
 	const active = getActiveRuntimeOrNull();
 
@@ -352,11 +245,6 @@ export function setFocus(id: string | null): void {
 	}
 }
 
-/**
- * Check whether a widget ID is currently focused.
- *
- * @since 2.0.0
- */
 export function isFocused(id: string): boolean {
 	const active = getActiveRuntimeOrNull();
 
@@ -379,21 +267,11 @@ export function isFocused(id: string): boolean {
 	return false;
 }
 
-/**
- * Return the focused widget ID for the active runtime.
- *
- * @since 3.3.0
- */
 export function getFocusedId(): string | null {
 	const runtime = getActiveRuntime();
 	return runtime.getFocusedId();
 }
 
-/**
- * Close the most recently opened scoped widget.
- *
- * @since 1.0.0
- */
 export function end(): void {
 	const runtime = getActiveRuntime();
 
@@ -407,14 +285,6 @@ export function end(): void {
 	runtime.popScope();
 }
 
-/**
- * Ask every mounted runtime to draw another frame.
- *
- * Prefer the app-local `App.markDirty()` handle returned by {@link createApp}.
- * This global compatibility helper intentionally broadcasts to every mounted app.
- *
- * @since 1.0.0
- */
 export function markDirty(): void {
 	for (const runtime of mountedRuntimes) {
 		runtime.markDirty();

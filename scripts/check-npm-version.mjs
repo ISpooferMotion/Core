@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { runCommandSync } from "./package-utils.mjs";
 
 const [name, version] = process.argv.slice(2);
 if (!name || !version) {
@@ -7,7 +7,7 @@ if (!name || !version) {
 	);
 }
 
-const result = spawnSync(
+const result = runCommandSync(
 	"npm",
 	["view", `${name}@${version}`, "version", "--json"],
 	{

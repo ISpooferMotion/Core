@@ -1,4 +1,3 @@
-/// <reference types="node" />
 import { defineConfig } from "tsup";
 
 const shared = {

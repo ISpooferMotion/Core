@@ -1,19 +1,11 @@
-/**
- * Base styles required by the runtime.
- * Widget appearance is still controlled by the app.
- */
-
-/* Shared widget root */
 .ism-widget {
 	box-sizing: border-box;
 }
 
-/* Real containing block created by createApp for root-relative layers. */
 [data-ism-layer-host] {
 	box-sizing: border-box;
 }
 
-/* Error fallback root */
 [data-ism-error] {
 	box-sizing: border-box;
 }

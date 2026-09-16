@@ -36,4 +36,24 @@ describe("DevTools protocol v1", () => {
 		expect(snapshots[0]).not.toHaveProperty("markDirty");
 		expect(snapshots[0]).not.toHaveProperty("getStateStore");
 	});
+
+	it("shares mounted runtimes across independent registrations via global protocol", () => {
+		const runtimeA = new Runtime();
+		runtimeA.registerApp(() => {});
+		runtimeA.beginFrame();
+		runtimeA.getState("AppA/widget", { id: "a" });
+		runtimeA.endFrame();
+
+		const runtimeB = new Runtime();
+		runtimeB.registerApp(() => {});
+		runtimeB.beginFrame();
+		runtimeB.getState("AppB/widget", { id: "b" });
+		runtimeB.endFrame();
+
+		const protocol = installDevToolsProtocol();
+		const snapshots = protocol.listRuntimes();
+		expect(snapshots).toHaveLength(2);
+		expect(protocol.getRuntime(runtimeA.getInstanceId())).toBeDefined();
+		expect(protocol.getRuntime(runtimeB.getInstanceId())).toBeDefined();
+	});
 });

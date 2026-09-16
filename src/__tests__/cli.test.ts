@@ -1,7 +1,8 @@
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CliDeps } from "../cli";
-import { runCli } from "../cli";
+import { readVersion, runCli } from "../cli";
+import { CORE_VERSION } from "../version";
 
 function makeDeps(overrides: Partial<CliDeps> = {}): CliDeps {
 	return {
@@ -135,5 +136,12 @@ describe("runCli", () => {
 		expect(errorSpy).toHaveBeenCalled();
 		errorSpy.mockRestore();
 		logSpy.mockRestore();
+	});
+});
+
+describe("readVersion", () => {
+	it("returns package version or fallback to CORE_VERSION", () => {
+		const version = readVersion();
+		expect(version).toBe(CORE_VERSION);
 	});
 });

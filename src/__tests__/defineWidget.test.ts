@@ -13,8 +13,6 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-// Widget name validation
-
 describe("defineWidget name validation", () => {
 	it("throws for an empty name", () => {
 		expect(() =>
@@ -159,8 +157,6 @@ describe("defineWidget name validation", () => {
 	});
 });
 
-// Calls outside a draw pass
-
 describe("widget outside draw guard", () => {
 	it("throws when called outside a draw pass", () => {
 		runtime.registerApp(() => {});
@@ -173,8 +169,6 @@ describe("widget outside draw guard", () => {
 		expect(() => Btn()).toThrow("outside of a draw function");
 	});
 });
-
-// Conditional widgets
 
 describe("conditional widgets", () => {
 	it("preserves state when a widget is absent for one frame then returns", () => {
@@ -189,19 +183,15 @@ describe("conditional widgets", () => {
 			getReturnValue: (s) => s.n,
 		});
 
-		// Frame 1 records the widget before its render callback updates state.
 		runtime.beginFrame();
 		Counter();
 		runtime.endFrame();
 
-		// Set the value directly to match a later render update.
 		runtime.setState("Counter/Counter", { n: 42 });
 
-		// Frame 2 omits the widget.
 		runtime.beginFrame();
 		runtime.endFrame();
 
-		// Frame 3 adds the widget again.
 		runtime.beginFrame();
 		const val = Counter();
 		runtime.endFrame();
@@ -209,7 +199,6 @@ describe("conditional widgets", () => {
 		runtime.beginFrame();
 		runtime.endFrame();
 
-		// One missing frame is within the default generation retention.
 		expect(val).toBe(42);
 	});
 
@@ -222,13 +211,11 @@ describe("conditional widgets", () => {
 			getReturnValue: (s) => s.n,
 		});
 
-		// Frame 1
 		runtime.beginFrame();
 		Counter();
 		runtime.endFrame();
 		runtime.setState("Counter2/Counter2", { n: 7 });
 
-		// Frame 2 keeps the widget alive.
 		runtime.beginFrame();
 		const val = Counter();
 		runtime.endFrame();
@@ -236,8 +223,6 @@ describe("conditional widgets", () => {
 		expect(val).toBe(7);
 	});
 });
-
-// Temporary state consumption
 
 describe("consumeState", () => {
 	it("preserves an explicit undefined consumed value", () => {
@@ -264,8 +249,6 @@ describe("consumeState", () => {
 	});
 });
 
-// Widgets created in loops
-
 describe("loop widgets with changing counts", () => {
 	it("assigns unique IDs to each iteration via pushId", () => {
 		const ids: string[] = [];
@@ -279,7 +262,6 @@ describe("loop widgets with changing counts", () => {
 		}
 		runtime.endFrame();
 
-		// Every loop item needs a different ID.
 		const unique = new Set(ids);
 		expect(unique.size).toBe(5);
 	});
@@ -294,7 +276,6 @@ describe("loop widgets with changing counts", () => {
 			getReturnValue: (s) => s.val,
 		});
 
-		// Frame 1 has three items.
 		runtime.beginFrame();
 		for (let i = 0; i < 3; i++) {
 			runtime.pushIdSegment(`row-${i}`);
@@ -303,7 +284,6 @@ describe("loop widgets with changing counts", () => {
 		}
 		runtime.endFrame();
 
-		// Frame 2 removes one item.
 		runtime.beginFrame();
 		const results: number[] = [];
 		for (let i = 0; i < 2; i++) {
@@ -313,12 +293,9 @@ describe("loop widgets with changing counts", () => {
 		}
 		runtime.endFrame();
 
-		// Reused slots must still start with the default state.
 		expect(results).toEqual([0, 0]);
 	});
 });
-
-// widgetProps
 
 describe("widgetProps", () => {
 	it("injects data-ism-widget and class names", () => {
@@ -339,7 +316,6 @@ describe("widgetProps", () => {
 		W();
 		runtime.endFrame();
 
-		// Call the saved render function to inspect the generated props.
 		const entries = runtime.getFrameBuffer().get("default")!;
 		const entry = entries[0]!;
 		entry.renderFn({

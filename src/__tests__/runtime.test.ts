@@ -21,8 +21,6 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-// Draw pass helper
-
 function drawPass(fn: () => void) {
 	runtime.beginFrame();
 	fn();
@@ -30,10 +28,8 @@ function drawPass(fn: () => void) {
 }
 
 function registerApp() {
-	runtime.registerApp(() => {}); // The tests only need a mounted runtime, not a real render callback.
+	runtime.registerApp(() => {});
 }
-
-// In-memory state retention
 
 describe("in-memory state retention", () => {
 	it("initializes state with defaultState on first access", () => {
@@ -524,15 +520,11 @@ describe("storage adapter persistence", () => {
 	});
 });
 
-// ID collisions
-
 describe("ID collision", () => {
 	it("returns the same ID for the same label in a frame", () => {
 		registerApp();
 		drawPass(() => {
 			const id1 = runtime.buildId("Button", "Submit");
-			// Calling buildId twice with the same label simulates two matching widgets.
-			// The second call should receive a collision suffix.
 			const id2 = runtime.buildId("Button", "Submit");
 			expect(id1).not.toBe(id2);
 			expect(id2).toContain("__2");
@@ -673,17 +665,13 @@ describe("DOM/runtime identity", () => {
 	});
 });
 
-// State cleanup
-
 describe("state GC", () => {
 	it("removes state for widgets that disappear after a frame", () => {
 		registerApp();
 		const id = "Button/Orphan";
 
-		// Frame 1 creates the widget state.
 		drawPass(() => {
 			runtime.buildId("Button", "Orphan");
-			// Register an entry so the ID is considered active.
 			runtime.getCurrentParentChildren().push({
 				id,
 				widgetName: "Button",
@@ -705,23 +693,12 @@ describe("state GC", () => {
 			clicked: false,
 		});
 
-		// Frame 2 leaves the widget out.
-		drawPass(() => {
-			// No widget is registered in this frame.
-		});
-
-		// A second missing committed frame exceeds the default one-frame retention.
 		drawPass(() => {});
 
-		// A new read should return the default instead of the old value.
-		// The old state should no longer be reachable.
-		// getState always returns a value, so behavior is checked indirectly.
-		// A recreated widget starts from its default state.
-		// This proves the previous entry was removed.
-		// Set a nondefault value before the cleanup check.
-		registerApp(); // Mount again before checking the new state.
+		drawPass(() => {});
+
+		registerApp();
 		const fresh = runtime.getState(id, { clicked: true });
-		// The old value is gone if cleanup worked.
 		expect(fresh).toEqual({ clicked: true });
 	});
 
@@ -765,25 +742,16 @@ describe("state GC", () => {
 					runtime.getState(id, {});
 				}
 			});
-			// One empty frame retains the just-removed widgets; the next cycle
-			// advances the generation far enough to collect older state.
 			drawPass(() => {});
 		}
 
-		// Advance one more missing generation so the final cycle is collected.
 		drawPass(() => {});
 
-		// The repeated cycle should not leave old state behind.
-		// The final empty frame removes the last active widget.
-		// Check cleanup through public behavior because the store is private.
-		// A missing old value should fall back to the provided default.
 		const testId = "Button/cycle-999-item-5";
 		const val = runtime.getState(testId, { sentinel: "fresh" });
 		expect(val).toEqual({ sentinel: "fresh" });
 	});
 });
-
-// Scopes
 
 describe("scope management", () => {
 	it("pushScope / popScope correctly nest widget children", () => {
@@ -834,8 +802,6 @@ describe("scope management", () => {
 	});
 });
 
-// markDirty batching
-
 describe("markDirty batching", () => {
 	it("multiple markDirty calls in the same microtask fire only once", async () => {
 		let renderCount = 0;
@@ -847,8 +813,7 @@ describe("markDirty batching", () => {
 		runtime.markDirty();
 		runtime.markDirty();
 
-		// Repeated calls in one task should schedule one render.
-		await Promise.resolve(); // Let the queued microtask run.
+		await Promise.resolve();
 		expect(renderCount).toBe(1);
 	});
 
@@ -869,8 +834,6 @@ describe("markDirty batching", () => {
 		runtime.unregisterApp();
 	});
 });
-
-// Inspection revisions and frame pool reuse
 
 describe("runtime diagnostics", () => {
 	function addFrameEntry(label: string): string {
@@ -984,8 +947,6 @@ describe("runtime diagnostics", () => {
 	});
 });
 
-// Runtime ownership
-
 describe("getRuntimeForId", () => {
 	it("resolves to the runtime that built the id", () => {
 		registerApp();
@@ -1026,7 +987,6 @@ describe("getRuntimeForId", () => {
 		idB = other.buildId("Button", "cancel");
 		other.endFrame();
 
-		// Different IDs should resolve to their own runtime.
 		expect(getRuntimeForId(idA)).toBe(runtime);
 		expect(getRuntimeForId(idB)).toBe(other);
 
@@ -1045,7 +1005,6 @@ describe("getRuntimeForId", () => {
 			idA = runtime.buildId("Button", "save");
 		});
 
-		// Matching widget names and labels can produce the same ID in separate roots.
 		other.beginFrame();
 		const idB = other.buildId("Button", "save");
 		other.endFrame();
@@ -1185,5 +1144,59 @@ describe("frame transactions", () => {
 		runtime.commitFrame(transaction);
 
 		expect(() => runtime.commitFrame(transaction)).not.toThrow();
+	});
+
+	it("preserves pending storage mutations across prepared React replay", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage);
+		const id = "widget/Counter/persistent-replay";
+		runtime.getState(id, { count: 10 }, true);
+
+		const prepared = runtime.beginFrame();
+		runtime.setState(id, { count: 99 }, true);
+		runtime.prepareFrame(prepared);
+
+		const replay = runtime.beginFrame(true);
+		expect(runtime.getState<{ count: number }>(id, { count: 0 }, true)).toEqual(
+			{
+				count: 99,
+			},
+		);
+		runtime.prepareFrame(replay);
+		runtime.commitFrame(replay);
+
+		expect(storedPayload(storage, TEST_NAMESPACE, id)).toEqual({ count: 99 });
+	});
+
+	it("overwrites carried-over storage mutations when replay mutates again", () => {
+		const storage = new MemoryStorageAdapter();
+		useStorageRuntime(storage);
+		const id = "widget/Counter/persistent-replay-overwrite";
+		runtime.getState(id, { count: 10 }, true);
+
+		const prepared = runtime.beginFrame();
+		runtime.setState(id, { count: 99 }, true);
+		runtime.prepareFrame(prepared);
+
+		const replay = runtime.beginFrame(true);
+		runtime.setState(id, { count: 100 }, true);
+		runtime.prepareFrame(replay);
+		runtime.commitFrame(replay);
+
+		expect(storedPayload(storage, TEST_NAMESPACE, id)).toEqual({ count: 100 });
+	});
+
+	it("handles duplicate memoBlock IDs with strictIds", () => {
+		registerApp();
+		runtime = new Runtime(undefined, undefined, undefined, true);
+		setActiveRuntime(runtime);
+		registerApp();
+		runtime.beginFrame();
+		runtime.buildMemoIdentity("item");
+		expect(() => runtime.buildMemoIdentity("item")).toThrowError(
+			expect.objectContaining({
+				code: "ISM_DUPLICATE_ID_STRICT",
+			}),
+		);
 	});
 });

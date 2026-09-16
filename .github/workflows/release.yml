@@ -118,23 +118,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish .artifacts/package.tgz --access public --ignore-scripts --provenance
 
-      - name: Extract release notes
-        if: steps.release-needed.outputs.needed == 'true'
-        id: changelog
-        shell: bash
-        run: |
-          node scripts/extract-release-notes.mjs \
-            "${{ steps.pkg.outputs.version }}" \
-            .artifacts/release-notes.md
-          echo "notes_file=.artifacts/release-notes.md" >> "$GITHUB_OUTPUT"
-
       - name: Create or update GitHub release
         if: steps.release-needed.outputs.needed == 'true'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: "v${{ steps.pkg.outputs.version }}"
           name: "v${{ steps.pkg.outputs.version }}"
-          body_path: ${{ steps.changelog.outputs.notes_file }}
+          generate_release_notes: false
           files: |
             .artifacts/package.tgz
             .artifacts/package.sha256

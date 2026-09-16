@@ -15,11 +15,6 @@ import {
 } from "../config";
 import { CORE_VERSION } from "../version";
 
-// The schema is maintained separately from the TypeScript config.
-// These assertions catch default values drifting between the two files.
-// Both sources need to agree before the test can pass.
-// This includes the values used by the CLI scaffold.
-// Keeping the check here avoids silent editor schema drift.
 const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(here, "..", "..");
 const schemaPath = join(projectRoot, "schema.json");
@@ -121,18 +116,19 @@ describe("defineConfig", () => {
 	});
 
 	it("throws for a non-boolean showDevTools", () => {
-		// @ts-expect-error This invalid value is tested at runtime.
-		expect(() => defineConfig({ showDevTools: "yes" })).toThrow("showDevTools");
+		expect(() => defineConfig({ showDevTools: "yes" as never })).toThrow(
+			"showDevTools",
+		);
 	});
 
 	it("throws for a non-boolean strictIds", () => {
-		// @ts-expect-error This invalid value is tested at runtime.
-		expect(() => defineConfig({ strictIds: "yes" })).toThrow("strictIds");
+		expect(() => defineConfig({ strictIds: "yes" as never })).toThrow(
+			"strictIds",
+		);
 	});
 
 	it("throws for a non-boolean strictRuntime", () => {
-		// @ts-expect-error This invalid value is tested at runtime.
-		expect(() => defineConfig({ strictRuntime: "yes" })).toThrow(
+		expect(() => defineConfig({ strictRuntime: "yes" as never })).toThrow(
 			"strictRuntime",
 		);
 	});
@@ -147,7 +143,8 @@ describe("defineConfig", () => {
 	});
 
 	it("throws for an invalid layerMode", () => {
-		// @ts-expect-error This invalid value is tested at runtime.
-		expect(() => defineConfig({ layerMode: "document" })).toThrow("layerMode");
+		expect(() => defineConfig({ layerMode: "document" as never })).toThrow(
+			"layerMode",
+		);
 	});
 });

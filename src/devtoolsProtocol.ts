@@ -9,7 +9,6 @@ export const DEVTOOLS_PROTOCOL_SYMBOL = Symbol.for(
 	"@ispoofermotion/core/devtools/v1",
 );
 
-/** Read-only external inspector snapshot. No live Runtime objects are exposed. */
 export interface InspectorRuntimeSnapshot {
 	instanceId: string;
 	storageNamespace: string | null;
@@ -19,7 +18,6 @@ export interface InspectorRuntimeSnapshot {
 	state: string;
 }
 
-/** Versioned protocol exposed only when the DevTools entry is loaded. */
 export interface InspectorProtocolV1 {
 	readonly version: typeof DEVTOOLS_PROTOCOL_VERSION;
 	listRuntimes(): readonly InspectorRuntimeSnapshot[];
@@ -60,7 +58,6 @@ function createProtocol(): InspectorProtocolV1 {
 	});
 }
 
-/** Install or return the v1 global inspector protocol. */
 export function installDevToolsProtocol(): InspectorProtocolV1 {
 	const target = globalThis as unknown as Record<PropertyKey, unknown>;
 	const existing = target[DEVTOOLS_PROTOCOL_SYMBOL];
@@ -76,7 +73,6 @@ export function installDevToolsProtocol(): InspectorProtocolV1 {
 	return protocol;
 }
 
-/** Read the protocol without installing it. */
 export function getDevToolsProtocol(): InspectorProtocolV1 | undefined {
 	const target = globalThis as unknown as Record<PropertyKey, unknown>;
 	const value = target[DEVTOOLS_PROTOCOL_SYMBOL];

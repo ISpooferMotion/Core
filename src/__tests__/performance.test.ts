@@ -8,13 +8,6 @@ beforeEach(() => {
 	setActiveRuntime(runtime);
 });
 
-/**
- * Run a small sample and return its median duration in milliseconds.
- *
- * Shared CI machines are noisy, so the first run is used for warmup and the
- * median is less affected by a random pause. These tests are catastrophic
- * regression guards; the scalable benchmark job owns trend-oriented budgets.
- */
 function medianDurationMs(fn: () => void, runs = 5): number {
 	fn();
 
@@ -83,12 +76,10 @@ describe("runtime performance guards", () => {
 			populate();
 			expect(runtime.getStateStore().size).toBe(500);
 
-			// The default policy keeps state for one missing committed frame.
 			runtime.beginFrame();
 			runtime.endFrame();
 			expect(runtime.getStateStore().size).toBe(500);
 
-			// The second missing frame crosses the generation retention boundary.
 			runtime.beginFrame();
 			runtime.endFrame();
 			expect(runtime.getStateStore().size).toBe(0);

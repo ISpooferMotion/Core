@@ -3,12 +3,17 @@ import { makeInteractive } from "../makeInteractive";
 
 function keyboardEvent(
 	key: string,
-	options: { repeat?: boolean; preventDefault?: () => void } = {},
+	options: {
+		repeat?: boolean;
+		preventDefault?: () => void;
+		currentTarget?: EventTarget;
+	} = {},
 ): import("react").KeyboardEvent {
 	return {
 		key,
 		repeat: options.repeat ?? false,
 		preventDefault: options.preventDefault ?? (() => {}),
+		...(options.currentTarget ? { currentTarget: options.currentTarget } : {}),
 	} as unknown as import("react").KeyboardEvent;
 }
 
@@ -55,6 +60,32 @@ describe("makeInteractive", () => {
 		);
 		expect(called).toBe(1);
 		expect(prevented).toBe(2);
+	});
+
+	it("activates on Space keyup even when component rerenders between keydown and keyup", () => {
+		let called = 0;
+		const targetElement = document.createElement("button");
+		const firstProps = makeInteractive(() => {
+			called++;
+		});
+		firstProps.onKeyDown(
+			keyboardEvent(" ", {
+				currentTarget: targetElement,
+				preventDefault: () => {},
+			}),
+		);
+		expect(called).toBe(0);
+
+		const secondProps = makeInteractive(() => {
+			called++;
+		});
+		secondProps.onKeyUp(
+			keyboardEvent(" ", {
+				currentTarget: targetElement,
+				preventDefault: () => {},
+			}),
+		);
+		expect(called).toBe(1);
 	});
 
 	it("does not activate Space keyup without a matching keydown", () => {
@@ -135,5 +166,12 @@ describe("makeInteractive", () => {
 		);
 		props.onKeyDown(keyboardEvent("ArrowRight"));
 		expect(called).toBe(1);
+	});
+
+	it("handles role option appropriately", () => {
+		const withoutRole = makeInteractive(() => {});
+		expect("role" in withoutRole).toBe(false);
+		const withRole = makeInteractive(() => {}, { role: "button" });
+		expect(withRole.role).toBe("button");
 	});
 });

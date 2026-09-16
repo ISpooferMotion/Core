@@ -243,7 +243,6 @@ class FramePool {
 	}
 }
 
-/** Runtime state for one component returned by `createApp`. */
 export class Runtime {
 	private readonly storage: StorageAdapter | null;
 	private readonly storageNamespace: string | null;
@@ -411,15 +410,16 @@ export class Runtime {
 	}
 
 	beginFrame(preservePreparedState = false): number {
-		// A React replay can start a new render before the previous attempt commits.
-		// Treat the older attempt as abandoned and restore the last committed state.
+		let carriedOverStorageMutations: Map<
+			string,
+			PendingStorageMutation
+		> | null = null;
 		if (this.frameTransaction) {
 			if (preservePreparedState && this.frameTransaction.prepared) {
-				// React can replay a prepared render in Strict Mode or after a
-				// suspended child. Preserve logical state changes made by that
-				// attempt so one-shot widget events are not observed twice.
 				this.frameRoot = this.frameTransaction.snapshot.frameRoot;
 				this.workingFramePool.reset();
+				carriedOverStorageMutations =
+					this.frameTransaction.pendingStorageMutations;
 				this.frameTransaction = null;
 				this.drawing = false;
 			} else {
@@ -431,15 +431,14 @@ export class Runtime {
 		this.frameTransaction = {
 			id: transactionId,
 			snapshot: this.captureFrameTransactionSnapshot(),
-			pendingStorageMutations: new Map(),
+			pendingStorageMutations: carriedOverStorageMutations
+				? new Map(carriedOverStorageMutations)
+				: new Map(),
 			prepared: false,
 		};
 
 		this.drawing = true;
 		this.frameGeneration++;
-		// Record into a buffer that is distinct from the committed tree. On commit
-		// the buffers swap, so the previous committed objects can be reused safely
-		// by the following speculative frame without mutating live React state.
 		this.workingFrameRoot.clear();
 		this.frameRoot = this.workingFrameRoot;
 		this.workingFramePool.reset();
@@ -566,11 +565,6 @@ export class Runtime {
 		this.drawing = false;
 	}
 
-	/**
-	 * Synchronously finalize a frame. Kept for direct Runtime consumers and
-	 * tests; React integration uses prepareFrame() during render and
-	 * commitFrame() from the commit phase.
-	 */
 	endFrame(): void {
 		const transaction = this.requireFrameTransaction();
 		this.prepareFrame(transaction.id);
@@ -672,7 +666,6 @@ export class Runtime {
 		if (persistence && this.storage) this.writeStorage(id, next, persistence);
 	}
 
-	/** Reset one live widget state to its declared default value. */
 	resetState(id: string): boolean {
 		if (!this.stateDefaults.has(id) || !this.stateStore.has(id)) return false;
 
@@ -695,7 +688,6 @@ export class Runtime {
 		return true;
 	}
 
-	/** Delete persisted values for every persistent widget known to this runtime. */
 	clearPersistentState(): number {
 		if (!this.storage) return 0;
 		let count = 0;
@@ -705,7 +697,6 @@ export class Runtime {
 		return count;
 	}
 
-	/** Delete every storage key owned by this runtime's stable namespace. */
 	clearStorageNamespace(): number {
 		const prefix = this.storagePrefix;
 		if (!this.storage || !prefix) return 0;
@@ -830,13 +821,30 @@ export class Runtime {
 		const base = `${this.idPrefix}__memo__/${encoded}`;
 		const count = (this.memoCollisionCounter.get(base) ?? 0) + 1;
 		this.memoCollisionCounter.set(base, count);
+		if (count > 1) {
+			if (this.strictIds) {
+				throw errors.createISMError(
+					"ISM_DUPLICATE_ID_STRICT",
+					`[ism] Duplicate memoBlock ID '${id}' in the same scope with strictIds enabled.`,
+					{ details: { id, count } },
+				);
+			}
+			if (!this.duplicateWarned.has(base)) {
+				this.duplicateWarned.add(base);
+				this.emitRuntimeDiagnostic(
+					"ISM_DUPLICATE_ID",
+					"warning",
+					`[ism] Duplicate memoBlock ID '${id}' in the same scope. Consider giving each memo block a unique ID.`,
+					{ id, count },
+				);
+			}
+		}
 		const suffix = count === 1 ? "" : `__${count}`;
 		const cacheKey = `${base}${suffix}`;
 		this.memoLastSeenFrame.set(cacheKey, this.frameGeneration);
 		return { cacheKey, idSegment: `${encoded}${suffix}` };
 	}
 
-	/** @deprecated Use `buildMemoIdentity`. */
 	buildMemoKey(id: string): string {
 		return this.buildMemoIdentity(id).cacheKey;
 	}
@@ -1027,7 +1035,6 @@ export class Runtime {
 		return this.treeRevision;
 	}
 
-	/** Keep tree revision tracking hot only while an inspector is actively open. */
 	attachInspector(): () => void {
 		this.inspectorSubscribers++;
 		let attached = true;
@@ -1089,8 +1096,6 @@ export class Runtime {
 	markDirty(): void {
 		if (this.dirty) return;
 		this.dirty = true;
-		// Draw/render work is speculative until React commits it. Do not schedule
-		// observable React work from an uncommitted attempt.
 		if (this.frameTransaction) return;
 		this.scheduleRerender();
 	}
@@ -1423,7 +1428,6 @@ export class Runtime {
 		return transaction;
 	}
 
-	/** Emit a structured diagnostic through this runtime's configured sink. @internal */
 	reportDiagnostic(diagnostic: errors.ISMDiagnostic): void {
 		errors.emitDiagnostic(this.onDiagnostic, {
 			...diagnostic,
@@ -1684,7 +1688,14 @@ export function extractDisplayLabel(label: string): string {
 }
 
 let activeRuntime: Runtime | null = null;
-export const mountedRuntimes = new Set<Runtime>();
+const GLOBAL_RUNTIMES_SYMBOL = Symbol.for(
+	"@ispoofermotion/core/mounted-runtimes",
+);
+const globalTarget = globalThis as unknown as Record<PropertyKey, unknown>;
+export const mountedRuntimes: Set<Runtime> =
+	(globalTarget[GLOBAL_RUNTIMES_SYMBOL] as Set<Runtime> | undefined) ??
+	new Set<Runtime>();
+globalTarget[GLOBAL_RUNTIMES_SYMBOL] = mountedRuntimes;
 
 const MAX_CROSS_RUNTIME_WARNINGS = 256;
 const crossRuntimeCollisionWarned = new Set<string>();

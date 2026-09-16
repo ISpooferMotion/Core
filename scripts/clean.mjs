@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 
 const all = process.argv.includes("--all");
-const paths = ["dist", ".typedoc"];
+const paths = ["dist"];
 
 if (all) {
 	paths.push(

@@ -1,40 +1,25 @@
-# Dependencies
 node_modules/
-
-# Build outputs
 dist/
-.typedoc/
-
-# Editors
+.artifacts/
+coverage/
+playwright-report/
+test-results/
+tests/browser/.tmp/
+repro-diff.json
+repro-err.txt
+.husky/_/
+*.tsbuildinfo
+*.zip
+*.tgz
+*.tar.gz
+*.log
+.DS_Store
+Thumbs.db
 .idea/
 .vscode/
 *.swp
 *.swo
-.DS_Store
-
-# Logs
-*.log
-
-# Environment files
 .env
 .env.local
 .env*.local
-
-# Package manager files
-bun.lockb
-coverage/
-
-# Local diagnostics
-core-diagnostics/
-core-diagnostics.zip
-
-# Browser test outputs
-playwright-report/
-test-results/
-tests/browser/.tmp/
-
-# Package/release artifacts
-.artifacts/
-
-# Miscellaneous
 *.ps1

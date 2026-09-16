@@ -1,5 +1,33 @@
+import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+
+export function formatCommand(command, args = []) {
+	return [command, ...args]
+		.map((part) => {
+			if (typeof part !== "string") return String(part);
+			if (process.platform === "win32") {
+				if (/[\s"&|<>()^%!]/.test(part)) {
+					const escaped = part.replace(/"/g, '\\"').replace(/%/g, "%%");
+					return `"${escaped}"`;
+				}
+				return part;
+			}
+			if (/[^\w@%+=:,./-]/.test(part)) {
+				return `'${part.replace(/'/g, "'\\''")}'`;
+			}
+			return part;
+		})
+		.join(" ");
+}
+
+export function runCommandSync(command, args = [], options = {}) {
+	const commandLine = formatCommand(command, args);
+	return spawnSync(commandLine, {
+		shell: true,
+		...options,
+	});
+}
 
 export async function createPublishStage(root, stageDir) {
 	await rm(stageDir, { recursive: true, force: true });

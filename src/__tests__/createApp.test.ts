@@ -247,6 +247,62 @@ describe("createApp", () => {
 		document.body.removeChild(secondContainer);
 	});
 
+	it("throws ISM_CROSS_RUNTIME_ID_COLLISION when createApp is mounted multiple times with different focused widgets", () => {
+		const FocusWidget = defineWidget<
+			Record<string, never>,
+			[label: string],
+			void
+		>({
+			name: "FocusWidget",
+			defaultState: {},
+			render: ({ widgetProps, id, args }) =>
+				createElement(
+					"button",
+					{
+						type: "button",
+						...widgetProps,
+						...makeInteractive(() => {}, { id, role: "button" }),
+					},
+					args[0],
+				),
+			getReturnValue: () => undefined,
+		});
+
+		const secondContainer = document.createElement("div");
+		document.body.appendChild(secondContainer);
+
+		const App = createApp(() => {
+			FocusWidget("first");
+			FocusWidget("second");
+		});
+
+		const rootA = createTestRoot(container);
+		const rootB = createTestRoot(secondContainer);
+
+		act(() => {
+			rootA.render(createElement(App));
+			rootB.render(createElement(App));
+		});
+
+		const runtimes = Array.from(mountedRuntimes);
+		expect(runtimes.length).toBe(2);
+		runtimes[0]?.setFocus("FocusWidget:first");
+		runtimes[1]?.setFocus("FocusWidget:second");
+
+		expect(() => App.getFocusedId()).toThrowError(
+			expect.objectContaining({
+				code: "ISM_CROSS_RUNTIME_ID_COLLISION",
+			}),
+		);
+
+		act(() => {
+			rootA.unmount();
+			rootB.unmount();
+		});
+
+		document.body.removeChild(secondContainer);
+	});
+
 	it("surfaces duplicate IDs as draw errors when strictIds is enabled", () => {
 		const consoleError = vi
 			.spyOn(console, "error")

@@ -6,18 +6,19 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { DEFAULT_ISM_CONFIG } from "./config";
 import { getErrorMessage } from "./errors";
+import { CORE_VERSION } from "./version";
 
 const CONFIG_FILENAME = "ism.config.json";
 
-function readVersion(): string {
+export function readVersion(): string {
 	try {
 		const pkgUrl = new URL("../package.json", import.meta.url);
 		const pkg = JSON.parse(readFileSync(pkgUrl, "utf8")) as {
 			version?: string;
 		};
-		return pkg.version ?? "0.0.0";
+		return pkg.version ?? CORE_VERSION;
 	} catch {
-		return "0.0.0";
+		return CORE_VERSION;
 	}
 }
 

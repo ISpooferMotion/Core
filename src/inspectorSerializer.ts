@@ -1,6 +1,5 @@
 import type { FrameEntry } from "./types";
 
-/** Resource limits used by DevTools inspection. */
 export interface InspectorLimits {
 	maxDepth: number;
 	maxNodes: number;
@@ -11,7 +10,6 @@ export interface InspectorLimits {
 	maxTreeNodes: number;
 }
 
-/** Conservative defaults that keep inspection work bounded during rendering. */
 export const DEFAULT_INSPECTOR_LIMITS: Readonly<InspectorLimits> = {
 	maxDepth: 8,
 	maxNodes: 1000,
@@ -234,9 +232,7 @@ function inspectValue(
 	let typeName = "Object";
 	try {
 		typeName = value.constructor?.name || "Object";
-	} catch {
-		// Proxies can throw while reading constructor. Keep the safe default.
-	}
+	} catch {}
 	if (typeName !== "Object") result.__type = typeName;
 
 	for (let index = 0; index < limit; index++) {
@@ -277,7 +273,6 @@ function inspectValue(
 	return result;
 }
 
-/** Serialize arbitrary state without allowing cycles or huge values to block DevTools. */
 export function serializeInspectorState(
 	state: unknown,
 	overrides?: Partial<InspectorLimits>,
@@ -296,7 +291,6 @@ export function serializeInspectorState(
 	}
 }
 
-/** Serialize the widget tree iteratively with explicit node/depth budgets. */
 export function serializeInspectorTree(
 	entries: readonly FrameEntry[],
 	overrides?: Partial<InspectorLimits>,

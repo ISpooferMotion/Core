@@ -1,8 +1,8 @@
-import { spawnSync } from "node:child_process";
 import { cp, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runCommandSync } from "./package-utils.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureRoot = resolve(root, "fixtures/consumers");
@@ -10,10 +10,9 @@ const tarball = resolve(root, process.argv[2] ?? ".artifacts/package.tgz");
 const tempRoot = await mkdtemp(resolve(tmpdir(), "ism-consumers-"));
 
 function run(command, args, cwd) {
-	const result = spawnSync(command, args, {
+	const result = runCommandSync(command, args, {
 		cwd,
 		stdio: "inherit",
-		shell: true,
 	});
 	if (result.status !== 0) process.exit(result.status ?? 1);
 }

@@ -1,8 +1,7 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createPublishStage } from "./package-utils.mjs";
+import { createPublishStage, runCommandSync } from "./package-utils.mjs";
 
 const root = process.cwd();
 const artifactDir = resolve(process.argv[2] ?? ".artifacts");
@@ -11,7 +10,7 @@ await rm(artifactDir, { recursive: true, force: true });
 await mkdir(artifactDir, { recursive: true });
 await createPublishStage(root, stageDir);
 
-const result = spawnSync(
+const result = runCommandSync(
 	"npm",
 	[
 		"pack",
@@ -21,7 +20,7 @@ const result = spawnSync(
 		"--pack-destination",
 		artifactDir,
 	],
-	{ encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], shell: true },
+	{ encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
 );
 
 if (result.status !== 0) {
@@ -32,9 +31,6 @@ function normalizePackEntries(payload) {
 	if (Array.isArray(payload)) return payload;
 	if (!payload || typeof payload !== "object") return [];
 
-	// npm <=11 returns an array, while npm 12 returns an object keyed by
-	// package name. Also accept a direct result object so this stays tolerant
-	// of future single-package output changes.
 	if (typeof payload.filename === "string") return [payload];
 	return Object.values(payload);
 }
