@@ -21,6 +21,8 @@ export type ISMErrorCode =
 	| "ISM_UNBALANCED_ID_STACK"
 	| "ISM_UNBALANCED_LAYER_STACK"
 	| "ISM_FRAME_TRANSACTION"
+	| "ISM_STATE_MUTATION"
+	| "ISM_INVALID_STATE_UPDATE"
 	| "ISM_STORAGE_FAILURE"
 	| "ISM_DRAW_ERROR"
 	| "ISM_WIDGET_RENDER_ERROR"
@@ -238,6 +240,20 @@ export function defaultStateCloneFailure(id: string, message: string): string {
 		"defaultState must be structured-cloneable (plain objects, arrays, " +
 		"primitives, Map, Set, Date, RegExp). Class instances, DOM nodes, and functions " +
 		"are not supported."
+	);
+}
+
+export function stateMutation(id: string): string {
+	return (
+		`${PREFIX} State for widget '${id}' was mutated in place during a draw. ` +
+		"State is immutable; return a new value from setState() or the widget state consumer instead of mutating the current value."
+	);
+}
+
+export function invalidStateUpdate(id: string, message: string): string {
+	return (
+		`${PREFIX} State update for widget '${id}' is invalid: ${message} ` +
+		"State values must use the same structured data model as defaultState."
 	);
 }
 

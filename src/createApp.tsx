@@ -5,12 +5,13 @@ import {
 	Fragment,
 	lazy,
 	Suspense,
+	useCallback,
 	useContext,
-	useEffect,
 	useLayoutEffect,
 	useMemo,
 	useReducer,
 	useRef,
+	useState,
 } from "react";
 import type { IsmConfig, LayerMode } from "./config";
 import { resolveConfig } from "./config";
@@ -21,7 +22,13 @@ import {
 	shouldShowErrorDetailsByDefault,
 } from "./ErrorBoundary";
 import * as errors from "./errors";
-import { getActiveRuntimeOrNull, Runtime, withRuntime } from "./runtime";
+import {
+	getActiveRuntimeOrNull,
+	isReactContextPendingError,
+	Runtime,
+	withRuntime,
+} from "./runtime";
+import { cloneStructuredState } from "./stateValue";
 import type { FrameEntry, StorageAdapter, StorageFailure } from "./types";
 
 const LazyDevToolsOverlay = lazy(async () => {
@@ -29,7 +36,57 @@ const LazyDevToolsOverlay = lazy(async () => {
 	return { default: module.DevToolsOverlay };
 });
 
-function renderEntry(runtime: Runtime, entry: FrameEntry): ReactNode {
+type FrameSnapshot = ReadonlyMap<string, readonly FrameEntry[]>;
+
+function cloneFrameEntry(entry: FrameEntry): FrameEntry {
+	return {
+		...entry,
+		args: [...entry.args],
+		children: entry.children.map(cloneFrameEntry),
+		renderState: cloneStructuredState(entry.renderState, "renderState"),
+		widgetProps: {
+			...entry.widgetProps,
+			...(entry.widgetProps.style
+				? { style: { ...entry.widgetProps.style } }
+				: {}),
+		},
+	};
+}
+
+function snapshotFrameBuffer(
+	layers: ReadonlyMap<string, readonly FrameEntry[]>,
+): FrameSnapshot {
+	return new Map(
+		Array.from(layers, ([layerName, entries]) => [
+			layerName,
+			entries.map(cloneFrameEntry),
+		]),
+	);
+}
+
+interface WidgetRenderBoundaryProps {
+	runtime: Runtime;
+	entry: FrameEntry;
+	renderProps: Parameters<FrameEntry["renderFn"]>[0];
+}
+
+function WidgetRenderBoundary({
+	runtime,
+	entry,
+	renderProps,
+}: WidgetRenderBoundaryProps): ReactNode {
+	return withRuntime(runtime, () => entry.renderFn(renderProps));
+}
+
+interface WidgetEntryRendererProps {
+	runtime: Runtime;
+	entry: FrameEntry;
+}
+
+function WidgetEntryRenderer({
+	runtime,
+	entry,
+}: WidgetEntryRendererProps): ReactNode {
 	const setState = (updater: unknown) => {
 		runtime.setState(entry.id, updater, entry.persistence ?? false);
 	};
@@ -40,16 +97,16 @@ function renderEntry(runtime: Runtime, entry: FrameEntry): ReactNode {
 					Fragment,
 					null,
 					...entry.children.map((child) =>
-						createElement(
-							Fragment,
-							{ key: child.id },
-							renderEntry(runtime, child),
-						),
+						createElement(WidgetEntryRenderer, {
+							key: child.id,
+							runtime,
+							entry: child,
+						}),
 					),
 				)
 			: null;
 
-	const widget = entry.renderFn({
+	const renderProps: Parameters<FrameEntry["renderFn"]>[0] = {
 		id: entry.id,
 		state: entry.renderState,
 		runtimeId: runtime.getInstanceId(),
@@ -57,6 +114,12 @@ function renderEntry(runtime: Runtime, entry: FrameEntry): ReactNode {
 		args: entry.args,
 		children,
 		widgetProps: entry.widgetProps,
+	};
+	const widget = createElement(WidgetRenderBoundary, {
+		key: entry.widgetName,
+		runtime,
+		entry,
+		renderProps,
 	});
 
 	if (!entry.a11yDescription) return widget;
@@ -88,7 +151,7 @@ function renderEntry(runtime: Runtime, entry: FrameEntry): ReactNode {
 
 function renderFrameBuffer(
 	runtime: Runtime,
-	layers: Map<string, FrameEntry[]>,
+	layers: FrameSnapshot,
 	layerZIndex: number,
 	layerMode: LayerMode,
 ): ReactNode {
@@ -114,11 +177,11 @@ function renderFrameBuffer(
 						: { display: "contents" },
 				},
 				...entries.map((entry) =>
-					createElement(
-						Fragment,
-						{ key: entry.id },
-						renderEntry(runtime, entry),
-					),
+					createElement(WidgetEntryRenderer, {
+						key: entry.id,
+						runtime,
+						entry,
+					}),
 				),
 			),
 		);
@@ -140,13 +203,19 @@ function renderFrameBuffer(
 
 export function useReactContext<T>(context: React.Context<T>): T {
 	const runtime = getActiveRuntimeOrNull();
-	if (runtime?.isCapturingMemo()) {
+	if (!runtime?.isDrawing()) {
+		throw errors.createISMError(
+			"ISM_NO_ACTIVE_RUNTIME",
+			errors.noActiveRuntime(),
+		);
+	}
+	if (runtime.isCapturingMemo()) {
 		throw errors.createISMError(
 			"ISM_REACT_CONTEXT_IN_MEMO",
 			errors.reactContextInsideMemoBlock(),
 		);
 	}
-	return useContext(context);
+	return runtime.readReactContext(context);
 }
 
 export interface AppOptions extends IsmConfig {
@@ -171,6 +240,32 @@ export interface AppHandle {
 
 export type IsmApp = React.FC & AppHandle;
 
+interface ReactContextReaderProps {
+	runtime: Runtime;
+	context: React.Context<unknown>;
+	onContextChange: () => void;
+}
+
+function ReactContextReader({
+	runtime,
+	context,
+	onContextChange,
+}: ReactContextReaderProps): null {
+	const value = useContext(context);
+
+	useLayoutEffect(() => {
+		const changed = runtime.setReactContextValue(context, value);
+		if (changed && runtime.isAppMounted()) onContextChange();
+	}, [runtime, context, value, onContextChange]);
+
+	return null;
+}
+
+interface DrawFailure {
+	error: Error;
+	retryFailed: boolean;
+}
+
 export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 	const config = resolveConfig(options);
 	const storage = options?.storage;
@@ -191,31 +286,66 @@ export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 		);
 	}
 
-	function ISMCoreRenderer({ runtime }: { runtime: Runtime }) {
-		const [drawRetryAttempt, requestDrawRetry] = useReducer(
-			(attempt: number) => attempt + 1,
+	function ISMCoreApp() {
+		const runtime = useMemo(() => {
+			const nextRuntime = new Runtime(
+				storage,
+				storageNamespace,
+				onStorageError,
+				config.strictIds,
+				config.strictRuntime,
+				onDiagnostic,
+				config.stateRetentionFrames,
+			);
+			return nextRuntime;
+		}, []);
+		const [frameSnapshot, setFrameSnapshot] = useState<FrameSnapshot>(
+			() => new Map(),
+		);
+		const [drawFailure, setDrawFailure] = useState<DrawFailure | null>(null);
+		const [, forceContextBridgeRender] = useReducer(
+			(revision: number) => revision + 1,
 			0,
 		);
+		const initialDrawAttempted = useRef(false);
+		const retryAttempt = useRef(0);
 		const lastSuccessfulRetryAttempt = useRef(0);
 
-		let drawError: Error | null = null;
-		let frameTransactionId: number | null = null;
+		const performDraw = useCallback(() => {
+			runtime.consumeDirtySignal();
+			let frameTransactionId: number | null = null;
 
-		withRuntime(runtime, () => {
-			frameTransactionId = runtime.beginFrame(true);
 			try {
-				drawFn();
-				runtime.prepareFrame(frameTransactionId);
+				withRuntime(runtime, () => {
+					frameTransactionId = runtime.beginFrame();
+					drawFn();
+					runtime.prepareFrame(frameTransactionId);
+					runtime.commitFrame(frameTransactionId);
+				});
+
+				setFrameSnapshot(snapshotFrameBuffer(runtime.getFrameBuffer()));
+				setDrawFailure(null);
+				lastSuccessfulRetryAttempt.current = retryAttempt.current;
 			} catch (err: unknown) {
-				runtime.abortFrame(frameTransactionId);
-				drawError = err instanceof Error ? err : new Error(String(err));
+				if (frameTransactionId !== null) {
+					runtime.abortFrame(frameTransactionId);
+				}
+
+				if (isReactContextPendingError(err)) {
+					forceContextBridgeRender();
+					return;
+				}
+
+				const drawError = err instanceof Error ? err : new Error(String(err));
 				errors.emitDiagnostic(
 					onDiagnostic,
 					errors.createDiagnostic(
 						errors.getErrorCode(drawError, "ISM_DRAW_ERROR"),
 						"error",
 						"[ism] Uncaught error in draw function.",
-						{ cause: drawError, runtimeId: runtime.getInstanceId() },
+						showErrorDetails
+							? { cause: drawError, runtimeId: runtime.getInstanceId() }
+							: { runtimeId: runtime.getInstanceId() },
 					),
 				);
 				try {
@@ -227,107 +357,103 @@ export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 							errors.getErrorCode(drawError, "ISM_DRAW_ERROR"),
 							"error",
 							"[ism] onError hook threw while handling a draw failure.",
-							{ cause: hookError, runtimeId: runtime.getInstanceId() },
+							showErrorDetails
+								? { cause: hookError, runtimeId: runtime.getInstanceId() }
+								: { runtimeId: runtime.getInstanceId() },
 						),
 					);
 				}
+				setDrawFailure({
+					error: drawError,
+					retryFailed:
+						retryAttempt.current > lastSuccessfulRetryAttempt.current,
+				});
 			}
-		});
+		}, [runtime]);
+
+		const retryDraw = useCallback(() => {
+			retryAttempt.current++;
+			performDraw();
+		}, [performDraw]);
 
 		useLayoutEffect(() => {
-			if (frameTransactionId !== null && drawError === null) {
-				runtime.commitFrame(frameTransactionId);
-				lastSuccessfulRetryAttempt.current = drawRetryAttempt;
-			}
-			return () => {
-				if (frameTransactionId !== null) {
-					runtime.abortFrame(frameTransactionId);
-				}
-			};
-		});
-
-		if (drawError) {
-			const context: ErrorFallbackContext = {
-				title: "Draw function error",
-				error: drawError,
-				kind: "draw",
-				errorCode: errors.getErrorCode(drawError, "ISM_DRAW_ERROR"),
-				showErrorDetails,
-				retryFailed: drawRetryAttempt > lastSuccessfulRetryAttempt.current,
-				onRetry: requestDrawRetry,
-			};
-			return createElement(SafeErrorFallback, {
-				context,
-				...(renderErrorFallback ? { renderFallback: renderErrorFallback } : {}),
-				...(onDiagnostic ? { onDiagnostic } : {}),
-			});
-		}
-
-		const frameBuffer = runtime.getFrameBuffer();
-		const renderedFrame = withRuntime(runtime, () =>
-			renderFrameBuffer(
-				runtime,
-				frameBuffer,
-				config.layerZIndex,
-				config.layerMode,
-			),
-		);
-		if (!config.showDevTools) return renderedFrame;
-		return createElement(
-			Fragment,
-			null,
-			renderedFrame,
-			createElement(
-				Suspense,
-				{ fallback: null },
-				createElement(LazyDevToolsOverlay, {
-					runtime,
-					zIndex: config.layerZIndex + 1,
-				}),
-			),
-		);
-	}
-
-	ISMCoreRenderer.displayName = "ISMCoreRenderer";
-
-	function ISMCoreApp() {
-		const runtime = useMemo(
-			() =>
-				new Runtime(
-					storage,
-					storageNamespace,
-					onStorageError,
-					config.strictIds,
-					config.strictRuntime,
-					onDiagnostic,
-					config.stateRetentionFrames,
-				),
-			[],
-		);
-		const [, forceRender] = useReducer((x: number) => x + 1, 0);
-
-		useEffect(() => {
-			runtime.registerApp(forceRender);
+			runtime.registerApp(performDraw);
 			localRuntimes.add(runtime);
+			if (!initialDrawAttempted.current) {
+				initialDrawAttempted.current = true;
+				performDraw();
+			}
 			return () => {
 				localRuntimes.delete(runtime);
 				runtime.unregisterApp();
 			};
-		}, [runtime]);
+		}, [runtime, performDraw]);
 
-		return (
-			<ISMCoreErrorBoundary
-				{...(onError
-					? { onError: (error: Error, info: ErrorInfo) => onError(error, info) }
-					: {})}
-				{...(renderErrorFallback
-					? { renderFallback: renderErrorFallback }
-					: {})}
-				showErrorDetails={showErrorDetails}
-				{...(onDiagnostic ? { onDiagnostic } : {})}
-			>
-				<ISMCoreRenderer runtime={runtime} />
-			</ISMCoreErrorBoundary>
+		const contextReaders = runtime
+			.getRequestedReactContexts()
+			.map((context: React.Context<unknown>) =>
+				createElement(ReactContextReader, {
+					key: runtime.getReactContextId(context),
+					runtime,
+					context,
+					onContextChange: performDraw,
+				}),
+			);
+
+		let content: ReactNode;
+		if (drawFailure) {
+			const context: ErrorFallbackContext = {
+				title: "Draw function error",
+				error: drawFailure.error,
+				kind: "draw",
+				errorCode: errors.getErrorCode(drawFailure.error, "ISM_DRAW_ERROR"),
+				showErrorDetails,
+				retryFailed: drawFailure.retryFailed,
+				onRetry: retryDraw,
+			};
+			content = createElement(SafeErrorFallback, {
+				context,
+				...(renderErrorFallback ? { renderFallback: renderErrorFallback } : {}),
+				...(onDiagnostic ? { onDiagnostic } : {}),
+			});
+		} else {
+			const renderedFrame = renderFrameBuffer(
+				runtime,
+				frameSnapshot,
+				config.layerZIndex,
+				config.layerMode,
+			);
+			content = config.showDevTools
+				? createElement(
+						Fragment,
+						null,
+						renderedFrame,
+						createElement(
+							Suspense,
+							{ fallback: null },
+							createElement(LazyDevToolsOverlay, {
+								runtimeId: runtime.getInstanceId(),
+								zIndex: config.layerZIndex + 1,
+							}),
+						),
+					)
+				: renderedFrame;
+		}
+
+		return createElement(
+			ISMCoreErrorBoundary,
+			{
+				...(onError
+					? {
+							onError: (error: Error, info: ErrorInfo) => onError(error, info),
+						}
+					: {}),
+				...(renderErrorFallback ? { renderFallback: renderErrorFallback } : {}),
+				showErrorDetails,
+				...(onDiagnostic ? { onDiagnostic } : {}),
+			},
+			...contextReaders,
+			content,
 		);
 	}
 	ISMCoreApp.displayName = "ISMCoreApp";
@@ -386,14 +512,16 @@ export function createApp(drawFn: () => void, options?: AppOptions): IsmApp {
 	};
 	app.clearPersistentState = () => {
 		let cleared = 0;
-		for (const runtime of localRuntimes)
+		for (const runtime of localRuntimes) {
 			cleared += runtime.clearPersistentState();
+		}
 		return cleared;
 	};
 	app.clearStorageNamespace = () => {
 		let cleared = 0;
-		for (const runtime of localRuntimes)
+		for (const runtime of localRuntimes) {
 			cleared += runtime.clearStorageNamespace();
+		}
 		return cleared;
 	};
 

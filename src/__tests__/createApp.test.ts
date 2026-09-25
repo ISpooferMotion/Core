@@ -1,4 +1,12 @@
-import { act, createContext, createElement, StrictMode, Suspense } from "react";
+import {
+	act,
+	createContext,
+	createElement,
+	Fragment,
+	StrictMode,
+	Suspense,
+	useState,
+} from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp, useReactContext } from "../createApp";
 import { defineWidget } from "../defineWidget";
@@ -77,6 +85,93 @@ describe("createApp", () => {
 		});
 
 		expect(container.textContent).toContain("hello world");
+	});
+
+	it("does not execute the draw function for a React render that never commits", async () => {
+		let draws = 0;
+		let released = false;
+		let release: (() => void) | undefined;
+		const suspended = new Promise<void>((resolve) => {
+			release = () => {
+				released = true;
+				resolve();
+			};
+		});
+
+		function BlockCommit() {
+			if (!released) throw suspended;
+			return null;
+		}
+
+		const App = createApp(() => {
+			draws++;
+			Text("committed draw");
+		});
+		const root = createTestRoot(container);
+
+		await act(async () => {
+			root.render(
+				createElement(
+					Suspense,
+					{ fallback: createElement("span", null, "not committed") },
+					createElement(
+						Fragment,
+						null,
+						createElement(App),
+						createElement(BlockCommit),
+					),
+				),
+			);
+		});
+
+		expect(container.textContent).toContain("not committed");
+		expect(draws).toBe(0);
+
+		await act(async () => {
+			release?.();
+			await suspended;
+		});
+		await waitForCondition(
+			() => container.textContent?.includes("committed draw") ?? false,
+		);
+
+		expect(draws).toBe(1);
+	});
+
+	it("gives widget render callbacks their own React hook boundary", async () => {
+		let visible = true;
+		const Hooked = defineWidget<Record<string, never>, [label: string], void>({
+			name: "HookedRender",
+			defaultState: {},
+			render: function HookedRender({ args }) {
+				const [suffix] = useState("hooked");
+				return createElement("span", null, `${args[0]} ${suffix}`);
+			},
+			getReturnValue: () => undefined,
+		});
+		const App = createApp(() => {
+			Text("before");
+			if (visible) Hooked("widget");
+			Text("after");
+		});
+		const root = createTestRoot(container);
+
+		act(() => root.render(createElement(App)));
+		expect(container.textContent).toContain("widget hooked");
+
+		visible = false;
+		await act(async () => {
+			App.markDirty();
+			await Promise.resolve();
+		});
+		expect(container.textContent).not.toContain("widget hooked");
+
+		visible = true;
+		await act(async () => {
+			App.markDirty();
+			await Promise.resolve();
+		});
+		expect(container.textContent).toContain("widget hooked");
 	});
 
 	it("exposes app-local handles that do not dirty unrelated roots", async () => {
@@ -755,7 +850,7 @@ describe("useReactContext", () => {
 		consoleError.mockRestore();
 	});
 
-	it("passes through the current context value", () => {
+	it("passes through the current context value", async () => {
 		const TestContext = createContext("default-value");
 		let observed = "";
 
@@ -766,7 +861,7 @@ describe("useReactContext", () => {
 
 		const root = createTestRoot(container);
 
-		act(() => {
+		await act(async () => {
 			root.render(
 				createElement(
 					TestContext.Provider,
@@ -775,9 +870,79 @@ describe("useReactContext", () => {
 				),
 			);
 		});
+		await waitForCondition(() => observed === "provided-value");
 
-		expect(observed).toBe("provided-value");
 		expect(container.textContent).toContain("provided-value");
+	});
+
+	it("redraws from committed React context updates", async () => {
+		const TestContext = createContext("default-value");
+		let observed = "";
+		const App = createApp(() => {
+			observed = useReactContext(TestContext);
+			Text(`context: ${observed}`);
+		});
+		const root = createTestRoot(container);
+
+		await act(async () => {
+			root.render(
+				createElement(
+					TestContext.Provider,
+					{ value: "first-value" },
+					createElement(App),
+				),
+			);
+		});
+		await waitForCondition(() => observed === "first-value");
+
+		await act(async () => {
+			root.render(
+				createElement(
+					TestContext.Provider,
+					{ value: "second-value" },
+					createElement(App),
+				),
+			);
+		});
+		await waitForCondition(() => observed === "second-value");
+
+		expect(container.textContent).toContain("context: second-value");
+	});
+
+	it("supports React context appearing on a later conditional draw without hook-order coupling", async () => {
+		const TestContext = createContext("default-value");
+		let readContext = false;
+		let observed = "";
+		const App = createApp(() => {
+			if (readContext) {
+				// biome-ignore lint/correctness/useHookAtTopLevel: testing conditional context access in test
+				observed = useReactContext(TestContext);
+				Text(`context: ${observed}`);
+			} else {
+				Text("context disabled");
+			}
+		});
+		const root = createTestRoot(container);
+
+		act(() => {
+			root.render(
+				createElement(
+					TestContext.Provider,
+					{ value: "late-value" },
+					createElement(App),
+				),
+			);
+		});
+		expect(container.textContent).toContain("context disabled");
+
+		readContext = true;
+		await act(async () => {
+			App.markDirty();
+			await Promise.resolve();
+		});
+		await waitForCondition(() => observed === "late-value");
+
+		expect(container.textContent).toContain("context: late-value");
 	});
 });
 
@@ -799,16 +964,45 @@ describe("createApp diagnostics and production error handling", () => {
 		});
 
 		expect(container.innerHTML).toBe("");
-		expect(consoleError).toHaveBeenCalledWith(
-			expect.stringContaining(
+		const redactedCall = consoleError.mock.calls.find(([message]) =>
+			String(message).includes(
 				"Core could not complete the current draw frame.",
 			),
-			expect.any(Error),
-			expect.any(String),
+		);
+		expect(redactedCall).toHaveLength(1);
+		expect(JSON.stringify(consoleError.mock.calls)).not.toContain(
+			"secret draw details",
 		);
 		expect(onDiagnostic).toHaveBeenCalledWith(
 			expect.objectContaining({ code: "ISM_DRAW_ERROR", level: "error" }),
 		);
+		const diagnostic = onDiagnostic.mock.calls[0]?.[0] as
+			| { cause?: unknown }
+			| undefined;
+		expect(diagnostic).not.toHaveProperty("cause");
+		consoleError.mockRestore();
+	});
+
+	it("does not leak redacted draw details through default diagnostic console arguments", () => {
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		const App = createApp(
+			() => {
+				throw new Error("private token draw-secret-93841");
+			},
+			{ showErrorDetails: false },
+		);
+		const root = createTestRoot(container);
+
+		act(() => root.render(createElement(App)));
+
+		const allConsoleArguments = consoleError.mock.calls
+			.flat()
+			.map((value) => String(value))
+			.join("\n");
+		expect(allConsoleArguments).not.toContain("draw-secret-93841");
+		expect(allConsoleArguments).not.toContain("private token");
 		consoleError.mockRestore();
 	});
 

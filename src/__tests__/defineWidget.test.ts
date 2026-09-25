@@ -91,6 +91,21 @@ describe("defineWidget name validation", () => {
 		).toThrow("unsupported custom prototype");
 	});
 
+	it("rejects symbol-keyed default state before structuredClone can drop it", () => {
+		const key = Symbol("hidden");
+		const state = { visible: true } as Record<PropertyKey, unknown>;
+		state[key] = "lost by structuredClone";
+
+		expect(() =>
+			defineWidget({
+				name: "SymbolState",
+				defaultState: state,
+				render: () => null,
+				getReturnValue: () => undefined,
+			}),
+		).toThrow("symbol-keyed property");
+	});
+
 	it("accepts defaultState with Map/Set/Date values", () => {
 		expect(() =>
 			defineWidget({

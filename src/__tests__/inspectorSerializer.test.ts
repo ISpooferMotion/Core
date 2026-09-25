@@ -23,6 +23,16 @@ describe("bounded DevTools serializer", () => {
 		expect(serialized).toContain("Uint8Array");
 	});
 
+	it("distinguishes shared references from actual cycles", () => {
+		const shared = { value: 7 };
+		const serialized = serializeInspectorState({
+			first: shared,
+			second: shared,
+		});
+		expect(serialized).not.toContain("[Circular");
+		expect(serialized.match(/"value": 7/g)).toHaveLength(2);
+	});
+
 	it("serializes valid and invalid dates without relying on Date JSON hooks", () => {
 		expect(
 			serializeInspectorState(new Date("2026-01-02T03:04:05.000Z")),

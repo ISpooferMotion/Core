@@ -30,7 +30,7 @@ type Inspectable =
 
 interface SerializationContext {
 	limits: InspectorLimits;
-	seen: WeakMap<object, string>;
+	active: WeakMap<object, string>;
 	nodes: number;
 }
 
@@ -118,7 +118,7 @@ function inspectValue(
 		return `[Function: ${value.name || "anonymous"}]`;
 	if (typeof value !== "object") return String(value);
 
-	const circularPath = context.seen.get(value);
+	const circularPath = context.active.get(value);
 	if (circularPath) return `[Circular -> ${circularPath}]`;
 	if (context.nodes >= context.limits.maxNodes)
 		return `[Truncated: maxNodes=${context.limits.maxNodes}]`;
@@ -126,151 +126,165 @@ function inspectValue(
 		return `[Truncated: maxDepth=${context.limits.maxDepth}]`;
 
 	context.nodes++;
-	context.seen.set(value, path);
+	context.active.set(value, path);
 
-	if (value instanceof Date) {
-		return Number.isNaN(value.getTime())
-			? { __type: "Date", value: "Invalid Date" }
-			: { __type: "Date", value: value.toISOString() };
-	}
-	if (value instanceof RegExp)
-		return { __type: "RegExp", value: String(value) };
-	if (value instanceof Error) {
-		return {
-			__type: "Error",
-			name: value.name,
-			message: truncateString(value.message, context.limits.maxStringLength),
-			...(value.stack
-				? {
-						stack: truncateString(
-							value.stack,
-							context.limits.maxStringLength * 2,
-						),
-					}
-				: {}),
-		};
-	}
-	if (value instanceof Map) {
-		const entries: Inspectable[] = [];
-		let index = 0;
-		for (const [key, entryValue] of value) {
-			if (index >= context.limits.maxArrayLength) break;
-			entries.push([
-				inspectValue(key, context, depth + 1, `${path}.<map-key:${index}>`),
-				inspectValue(
-					entryValue,
-					context,
-					depth + 1,
-					`${path}.<map-value:${index}>`,
-				),
-			]);
-			index++;
-		}
-		if (value.size > index)
-			entries.push(`[${value.size - index} map entries truncated]`);
-		return { __type: "Map", size: value.size, entries };
-	}
-	if (value instanceof Set) {
-		const values: Inspectable[] = [];
-		let index = 0;
-		for (const entryValue of value) {
-			if (index >= context.limits.maxArrayLength) break;
-			values.push(
-				inspectValue(entryValue, context, depth + 1, `${path}.<set:${index}>`),
-			);
-			index++;
-		}
-		if (value.size > index)
-			values.push(`[${value.size - index} set values truncated]`);
-		return { __type: "Set", size: value.size, values };
-	}
-	if (ArrayBuffer.isView(value)) {
-		if (value instanceof DataView) {
-			return { __type: "DataView", byteLength: value.byteLength };
-		}
-		const arrayLike = value as unknown as ArrayLike<unknown>;
-		const length = Math.min(arrayLike.length, context.limits.maxArrayLength);
-		const values: Inspectable[] = [];
-		for (let index = 0; index < length; index++) {
-			values.push(
-				inspectValue(arrayLike[index], context, depth + 1, `${path}[${index}]`),
-			);
-		}
-		if (arrayLike.length > length)
-			values.push(`[${arrayLike.length - length} values truncated]`);
-		return {
-			__type: value.constructor.name,
-			length: arrayLike.length,
-			values,
-		};
-	}
-	if (value instanceof ArrayBuffer) {
-		return { __type: "ArrayBuffer", byteLength: value.byteLength };
-	}
-	if (Array.isArray(value)) {
-		const result: Inspectable[] = [];
-		const length = Math.min(value.length, context.limits.maxArrayLength);
-		for (let index = 0; index < length; index++) {
-			result.push(
-				inspectValue(value[index], context, depth + 1, `${path}[${index}]`),
-			);
-		}
-		if (value.length > length)
-			result.push(`[${value.length - length} array items truncated]`);
-		return result;
-	}
-
-	const result: Record<string, Inspectable> = {};
-	let keys: string[];
 	try {
-		keys = Object.keys(value);
-	} catch (error) {
-		return `[Uninspectable object: ${error instanceof Error ? error.message : String(error)}]`;
-	}
+		if (value instanceof Date) {
+			return Number.isNaN(value.getTime())
+				? { __type: "Date", value: "Invalid Date" }
+				: { __type: "Date", value: value.toISOString() };
+		}
+		if (value instanceof RegExp)
+			return { __type: "RegExp", value: String(value) };
+		if (value instanceof Error) {
+			return {
+				__type: "Error",
+				name: value.name,
+				message: truncateString(value.message, context.limits.maxStringLength),
+				...(value.stack
+					? {
+							stack: truncateString(
+								value.stack,
+								context.limits.maxStringLength * 2,
+							),
+						}
+					: {}),
+			};
+		}
+		if (value instanceof Map) {
+			const entries: Inspectable[] = [];
+			let index = 0;
+			for (const [key, entryValue] of value) {
+				if (index >= context.limits.maxArrayLength) break;
+				entries.push([
+					inspectValue(key, context, depth + 1, `${path}.<map-key:${index}>`),
+					inspectValue(
+						entryValue,
+						context,
+						depth + 1,
+						`${path}.<map-value:${index}>`,
+					),
+				]);
+				index++;
+			}
+			if (value.size > index)
+				entries.push(`[${value.size - index} map entries truncated]`);
+			return { __type: "Map", size: value.size, entries };
+		}
+		if (value instanceof Set) {
+			const values: Inspectable[] = [];
+			let index = 0;
+			for (const entryValue of value) {
+				if (index >= context.limits.maxArrayLength) break;
+				values.push(
+					inspectValue(
+						entryValue,
+						context,
+						depth + 1,
+						`${path}.<set:${index}>`,
+					),
+				);
+				index++;
+			}
+			if (value.size > index)
+				values.push(`[${value.size - index} set values truncated]`);
+			return { __type: "Set", size: value.size, values };
+		}
+		if (ArrayBuffer.isView(value)) {
+			if (value instanceof DataView) {
+				return { __type: "DataView", byteLength: value.byteLength };
+			}
+			const arrayLike = value as unknown as ArrayLike<unknown>;
+			const length = Math.min(arrayLike.length, context.limits.maxArrayLength);
+			const values: Inspectable[] = [];
+			for (let index = 0; index < length; index++) {
+				values.push(
+					inspectValue(
+						arrayLike[index],
+						context,
+						depth + 1,
+						`${path}[${index}]`,
+					),
+				);
+			}
+			if (arrayLike.length > length)
+				values.push(`[${arrayLike.length - length} values truncated]`);
+			return {
+				__type: value.constructor.name,
+				length: arrayLike.length,
+				values,
+			};
+		}
+		if (value instanceof ArrayBuffer) {
+			return { __type: "ArrayBuffer", byteLength: value.byteLength };
+		}
+		if (Array.isArray(value)) {
+			const result: Inspectable[] = [];
+			const length = Math.min(value.length, context.limits.maxArrayLength);
+			for (let index = 0; index < length; index++) {
+				result.push(
+					inspectValue(value[index], context, depth + 1, `${path}[${index}]`),
+				);
+			}
+			if (value.length > length)
+				result.push(`[${value.length - length} array items truncated]`);
+			return result;
+		}
 
-	const limit = Math.min(keys.length, context.limits.maxObjectKeys);
-	let typeName = "Object";
-	try {
-		typeName = value.constructor?.name || "Object";
-	} catch {}
-	if (typeName !== "Object") result.__type = typeName;
-
-	for (let index = 0; index < limit; index++) {
-		const key = keys[index];
-		if (key === undefined) continue;
-		let descriptor: PropertyDescriptor | undefined;
+		const result: Record<string, Inspectable> = {};
+		let keys: string[];
 		try {
-			descriptor = Object.getOwnPropertyDescriptor(value, key);
+			keys = Object.keys(value);
 		} catch (error) {
-			result[key] =
-				`[Property descriptor threw: ${error instanceof Error ? error.message : String(error)}]`;
-			continue;
+			return `[Uninspectable object: ${error instanceof Error ? error.message : String(error)}]`;
 		}
 
-		if (!descriptor) {
-			result[key] = "[Unavailable property descriptor]";
-			continue;
-		}
+		const limit = Math.min(keys.length, context.limits.maxObjectKeys);
+		let typeName = "Object";
+		try {
+			typeName = value.constructor?.name || "Object";
+		} catch {}
+		if (typeName !== "Object") result.__type = typeName;
 
-		if (descriptor.get || descriptor.set) {
-			result[key] = descriptor.get
-				? descriptor.set
-					? "[Getter/Setter]"
-					: "[Getter]"
-				: "[Setter]";
-			continue;
-		}
+		for (let index = 0; index < limit; index++) {
+			const key = keys[index];
+			if (key === undefined) continue;
+			let descriptor: PropertyDescriptor | undefined;
+			try {
+				descriptor = Object.getOwnPropertyDescriptor(value, key);
+			} catch (error) {
+				result[key] =
+					`[Property descriptor threw: ${error instanceof Error ? error.message : String(error)}]`;
+				continue;
+			}
 
-		result[key] = inspectValue(
-			descriptor.value,
-			context,
-			depth + 1,
-			`${path}.${key}`,
-		);
+			if (!descriptor) {
+				result[key] = "[Unavailable property descriptor]";
+				continue;
+			}
+
+			if (descriptor.get || descriptor.set) {
+				result[key] = descriptor.get
+					? descriptor.set
+						? "[Getter/Setter]"
+						: "[Getter]"
+					: "[Setter]";
+				continue;
+			}
+
+			result[key] = inspectValue(
+				descriptor.value,
+				context,
+				depth + 1,
+				`${path}.${key}`,
+			);
+		}
+		if (keys.length > limit)
+			result["…"] = `[${keys.length - limit} object keys truncated]`;
+		return result;
+	} finally {
+		context.active.delete(value);
 	}
-	if (keys.length > limit)
-		result["…"] = `[${keys.length - limit} object keys truncated]`;
-	return result;
 }
 
 export function serializeInspectorState(
@@ -281,7 +295,7 @@ export function serializeInspectorState(
 	try {
 		const normalized = inspectValue(
 			state,
-			{ limits, seen: new WeakMap(), nodes: 0 },
+			{ limits, active: new WeakMap(), nodes: 0 },
 			0,
 			"$",
 		);

@@ -2,30 +2,27 @@ import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
-export function formatCommand(command, args = []) {
-	return [command, ...args]
-		.map((part) => {
-			if (typeof part !== "string") return String(part);
-			if (process.platform === "win32") {
-				if (/[\s"&|<>()^%!]/.test(part)) {
-					const escaped = part.replace(/"/g, '\\"').replace(/%/g, "%%");
-					return `"${escaped}"`;
-				}
-				return part;
-			}
-			if (/[^\w@%+=:,./-]/.test(part)) {
-				return `'${part.replace(/'/g, "'\\''")}'`;
-			}
-			return part;
-		})
-		.join(" ");
+function resolveCommand(command) {
+	if (process.platform !== "win32") {
+		return { command, shell: false };
+	}
+
+	if (command === "npm" || command === "npx" || command === "bun") {
+		return { command: `${command}.cmd`, shell: true };
+	}
+
+	const normalized = command.toLowerCase();
+	return {
+		command,
+		shell: normalized.endsWith(".cmd") || normalized.endsWith(".bat"),
+	};
 }
 
 export function runCommandSync(command, args = [], options = {}) {
-	const commandLine = formatCommand(command, args);
-	return spawnSync(commandLine, {
-		shell: true,
+	const resolved = resolveCommand(command);
+	return spawnSync(resolved.command, args, {
 		...options,
+		shell: resolved.shell,
 	});
 }
 

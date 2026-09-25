@@ -62,11 +62,12 @@ export function ErrorFallback({
 		: kind === "draw"
 			? "Core could not complete the current draw frame."
 			: "Core could not render the current widget tree.";
-	console.error(
-		`[ism] ${title} (${errorCode}): ${message}`,
-		error,
-		info?.componentStack ?? "",
-	);
+	const label = `[ism] ${title} (${errorCode}): ${message}`;
+	if (showErrorDetails) {
+		console.error(label, error, info?.componentStack ?? "");
+	} else {
+		console.error(label);
+	}
 	return null;
 }
 
@@ -100,7 +101,7 @@ class FallbackSafetyBoundary extends Component<
 				this.props.context.errorCode,
 				"error",
 				"[ism] Custom error fallback threw while handling an existing failure. The built-in fallback was restored.",
-				{ cause: error },
+				this.props.context.showErrorDetails ? { cause: error } : {},
 			),
 		);
 	}
@@ -158,7 +159,7 @@ export class ISMCoreErrorBoundary extends Component<
 					errors.getErrorCode(error, "ISM_WIDGET_RENDER_ERROR"),
 					"error",
 					"[ism] onError hook threw while handling a widget render failure.",
-					{ cause: hookError },
+					this.props.showErrorDetails ? { cause: hookError } : {},
 				),
 			);
 		}
@@ -168,10 +169,12 @@ export class ISMCoreErrorBoundary extends Component<
 				errors.getErrorCode(error, "ISM_WIDGET_RENDER_ERROR"),
 				"error",
 				"[ism] Uncaught error in widget render.",
-				{
-					cause: error,
-					details: { componentStack: info.componentStack },
-				},
+				this.props.showErrorDetails
+					? {
+							cause: error,
+							details: { componentStack: info.componentStack },
+						}
+					: {},
 			),
 		);
 	};

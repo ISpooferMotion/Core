@@ -292,11 +292,11 @@ describe("setFocus / isFocused", () => {
 		expect(isFocused("widget-2")).toBe(true);
 	});
 
-	it("does not throw with no active runtime", () => {
+	it("supports pre-focusing with no active runtime when one app is mounted", () => {
 		setActiveRuntime(null);
 
 		expect(() => setFocus("widget-1")).not.toThrow();
-		expect(() => isFocused("widget-1")).not.toThrow();
+		expect(isFocused("widget-1")).toBe(true);
 	});
 
 	it("routes to the ID's owning runtime when no runtime is active", () => {
@@ -344,10 +344,25 @@ describe("getFocusedId", () => {
 		expect(getFocusedId()).toBe("widget-1");
 	});
 
-	it("throws when called with no active runtime", () => {
+	it("returns the mounted app focus with no active runtime", () => {
+		setFocus("widget-1");
 		setActiveRuntime(null);
 
-		expect(() => getFocusedId()).toThrow("[ism]");
+		expect(getFocusedId()).toBe("widget-1");
+	});
+
+	it("throws when multiple mounted apps have different focused widgets", () => {
+		const otherRuntime = new Runtime();
+		otherRuntime.registerApp(() => {});
+		runtime.setFocus("widget-1");
+		otherRuntime.setFocus("widget-2");
+		setActiveRuntime(null);
+
+		expect(() => getFocusedId()).toThrow(
+			"Multiple mounted apps have different focused widgets",
+		);
+
+		otherRuntime.unregisterApp();
 	});
 });
 

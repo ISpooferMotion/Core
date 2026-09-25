@@ -1,3 +1,4 @@
+export type { DevToolsOverlayProps } from "./DevTools";
 export { DevToolsOverlay } from "./DevTools";
 export type {
 	InspectorProtocolV1,

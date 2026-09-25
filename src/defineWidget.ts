@@ -1,5 +1,6 @@
 import * as errors from "./errors";
 import { extractDisplayLabel, getActiveRuntime } from "./runtime";
+import { cloneStructuredState } from "./stateValue";
 import type {
 	ResolvedPersistenceOptions,
 	WidgetA11y,
@@ -32,56 +33,13 @@ function validateDefaultState<S>(name: string, defaultState: S): void {
 		);
 	}
 	try {
-		assertStructuredState(defaultState);
-		structuredClone(defaultState);
+		cloneStructuredState(defaultState, "defaultState");
 	} catch (err) {
 		throw errors.createISMError(
 			"ISM_DEFAULT_STATE_NOT_CLONEABLE",
 			errors.defaultStateNotCloneable(name, errors.getErrorMessage(err)),
 			{ cause: err, details: { name } },
 		);
-	}
-}
-
-function assertStructuredState(
-	value: unknown,
-	path = "defaultState",
-	seen = new WeakSet<object>(),
-): void {
-	if (value === null || typeof value !== "object") return;
-	if (seen.has(value)) return;
-	seen.add(value);
-
-	const allowed = [
-		Object.prototype,
-		Array.prototype,
-		Date.prototype,
-		Map.prototype,
-		Set.prototype,
-		RegExp.prototype,
-	];
-	const proto = Object.getPrototypeOf(value);
-	if (!allowed.includes(proto)) {
-		throw new Error(`${path} uses an unsupported custom prototype.`);
-	}
-
-	if (value instanceof Map) {
-		for (const [key, entry] of value) {
-			assertStructuredState(key, `${path}.<key>`, seen);
-			assertStructuredState(entry, `${path}.<value>`, seen);
-		}
-	} else if (value instanceof Set) {
-		for (const entry of value) {
-			assertStructuredState(entry, `${path}.<value>`, seen);
-		}
-	} else if (Array.isArray(value)) {
-		for (const [index, entry] of value.entries()) {
-			assertStructuredState(entry, `${path}[${index}]`, seen);
-		}
-	} else {
-		for (const [key, entry] of Object.entries(value)) {
-			assertStructuredState(entry, `${path}.${key}`, seen);
-		}
 	}
 }
 

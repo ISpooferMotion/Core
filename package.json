@@ -1,6 +1,6 @@
 {
 	"name": "@ispoofermotion/core",
-	"version": "4.2.0",
+	"version": "4.3.0",
 	"description": "Immediate-mode UI runtime for React, designed with Tauri applications in mind.",
 	"private": false,
 	"license": "UNLICENSED",
@@ -67,8 +67,8 @@
 		"schema.json"
 	],
 	"scripts": {
-		"build": "tsup && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/postbuild.mjs",
-		"dev": "tsup --watch",
+		"build": "node scripts/build.mjs && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/postbuild.mjs",
+		"dev": "node scripts/build.mjs --watch",
 		"prepare": "husky",
 		"typecheck": "tsc --noEmit",
 		"typecheck:browser": "tsc --project tsconfig.browser.json --noEmit",
@@ -81,22 +81,26 @@
 		"test:browser:build": "esbuild tests/browser/fixture.tsx --bundle --platform=browser --format=iife --sourcemap=inline --outfile=tests/browser/.tmp/fixture.js",
 		"test:browser": "bun run test:browser:build && bun run typecheck:browser && playwright test",
 		"clean": "node scripts/clean.mjs",
-		"check:core": "bun run verify:lock && bun run lint && bun run typecheck && bun run check:architecture && bun run test:coverage && bun run build && bun run size:check",
+		"check:core": "bun run verify:lock && bun run verify:metadata && bun run lint && bun run typecheck && bun run check:architecture && bun run test:coverage && bun run build && bun run size:check",
 		"check": "bun run check:core && bun run benchmark:runtime && bun run test:browser && bun run package:check",
 		"verify": "bun run check && node dist/cli.js --version && node dist/cli.js --help",
 		"prepack": "bun run build",
-		"prepublishOnly": "bun run typecheck && bun run lint && bun run test:coverage",
+		"prepublishOnly": "bun run verify:metadata && bun run typecheck && bun run lint && bun run test:coverage",
 		"verify:lock": "node scripts/verify-lock.mjs",
 		"package:reproducible": "node scripts/verify-reproducible-build.mjs",
 		"package:pack": "node scripts/pack-package.mjs",
 		"package:validate": "node scripts/validate-package.mjs",
 		"package:consumers": "node scripts/test-consumers.mjs",
-		"package:check": "bun run package:reproducible && bun run size:check && bun run package:pack && bun run package:validate && bun run package:consumers",
+		"package:check": "bun run package:reproducible && bun run size:check && bun run package:pack && bun run test:release-scripts && bun run package:validate && bun run package:consumers",
 		"size:check": "node scripts/check-bundle-size.mjs",
 		"benchmark:runtime": "node scripts/benchmark-runtime.mjs",
 		"check:performance": "bun run size:check && bun run benchmark:runtime",
 		"clean:all": "node scripts/clean.mjs --all",
-		"check:architecture": "node scripts/check-devtools-isolation.mjs"
+		"check:architecture": "node scripts/check-devtools-isolation.mjs",
+		"package:validate:external": "node scripts/validate-package-external.mjs",
+		"package:consumers:compat": "node scripts/test-consumers-compat.mjs",
+		"test:release-scripts": "node --test scripts/*.test.mjs",
+		"verify:metadata": "node scripts/verify-metadata.mjs"
 	},
 	"lint-staged": {
 		"*.{cjs,css,js,jsx,json,jsonc,mjs,ts,tsx}": [
@@ -121,7 +125,6 @@
 		"lint-staged": "^17.5.1",
 		"react": "^19.3.0",
 		"react-dom": "^19.3.0",
-		"tsup": "^8.5.1",
 		"typescript": "5.8.3",
 		"vitest": "^4.1.11"
 	},

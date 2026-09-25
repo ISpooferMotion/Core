@@ -65,6 +65,91 @@ describe("in-memory state retention", () => {
 		expect(result.n).toBe(10);
 	});
 
+	it("rolls back in-place object mutations when a frame aborts", () => {
+		registerApp();
+		const id = "widget/Transactional/mutable";
+		runtime.getState(id, { nested: { count: 1 } });
+
+		const transaction = runtime.beginFrame();
+		const state = runtime.getState<{ nested: { count: number } }>(id, {
+			nested: { count: 0 },
+		});
+		state.nested.count = 99;
+		expect(runtime.getStateStore().get(id)).toEqual({ nested: { count: 1 } });
+		expect(() => runtime.prepareFrame(transaction)).toThrowError(
+			expect.objectContaining({ code: "ISM_STATE_MUTATION" }),
+		);
+		runtime.abortFrame(transaction);
+
+		expect(
+			runtime.getState<{ nested: { count: number } }>(id, {
+				nested: { count: 0 },
+			}),
+		).toEqual({ nested: { count: 1 } });
+	});
+
+	it("does not expose the canonical state store through reads outside a frame", () => {
+		registerApp();
+		const id = "widget/Canonical/read-isolation";
+		const state = runtime.getState<{ nested: { count: number } }>(id, {
+			nested: { count: 1 },
+		});
+		state.nested.count = 99;
+
+		expect(
+			runtime.getState<{ nested: { count: number } }>(id, {
+				nested: { count: 0 },
+			}),
+		).toEqual({ nested: { count: 1 } });
+	});
+
+	it("rejects unsupported properties added to structured state in place", () => {
+		registerApp();
+		const id = "widget/Counter/map-property-mutation";
+		const transaction = runtime.beginFrame();
+		const state = runtime.getState(id, new Map([["count", 1]]));
+		Object.assign(state, { extra: true });
+
+		expect(() => runtime.prepareFrame(transaction)).toThrowError(
+			expect.objectContaining({ code: "ISM_STATE_MUTATION" }),
+		);
+		runtime.abortFrame(transaction);
+	});
+
+	it("isolates updater mutations from the committed state when an updater throws", () => {
+		registerApp();
+		const id = "widget/Counter/updater-throw";
+		runtime.getState(id, { nested: { count: 1 } });
+
+		expect(() =>
+			runtime.setState(id, (previous: unknown) => {
+				(previous as { nested: { count: number } }).nested.count = 99;
+				throw new Error("stop");
+			}),
+		).toThrow("stop");
+
+		expect(
+			runtime.getState<{ nested: { count: number } }>(id, {
+				nested: { count: 0 },
+			}),
+		).toEqual({ nested: { count: 1 } });
+	});
+
+	it("rejects non-structured state updates before they enter the store", () => {
+		registerApp();
+		const id = "widget/Counter/invalid-update";
+		runtime.getState(id, { value: "ok" });
+
+		expect(() =>
+			runtime.setState(id, { callback: () => undefined }),
+		).toThrowError(
+			expect.objectContaining({ code: "ISM_INVALID_STATE_UPDATE" }),
+		);
+		expect(runtime.getState(id, { value: "fallback" })).toEqual({
+			value: "ok",
+		});
+	});
+
 	it("skips revisions and rerenders when setState returns the identical value", async () => {
 		const trigger = vi.fn();
 		runtime.registerApp(trigger);
@@ -153,9 +238,16 @@ function storedPayload(
 	id: string,
 ) {
 	const record = storage.values.get(storageKey(namespace, id)) as
+		| {
+				__ismPersistence: "@ispoofermotion/core:persisted-state";
+				formatVersion: 2;
+				stateVersion: number;
+				payload: unknown;
+		  }
 		| { __ismState: 1; version: number; value: unknown }
 		| undefined;
-	return record?.value;
+	if (!record) return undefined;
+	return "payload" in record ? record.payload : record.value;
 }
 
 function useStorageRuntime(
@@ -218,6 +310,41 @@ describe("storage adapter persistence", () => {
 		expect(storage.writes).toHaveLength(0);
 	});
 
+	it("treats legacy raw state containing __ismState as user data unless it is a complete envelope", () => {
+		const storage = new MemoryStorageAdapter();
+		const id = "settings/LegacyCollision";
+		const key = storageKey(TEST_NAMESPACE, id);
+		storage.values.set(key, { __ismState: 1, theme: "dark" });
+		useStorageRuntime(storage);
+
+		const state = runtime.getState(id, { __ismState: 0, theme: "light" }, true);
+
+		expect(state).toEqual({ __ismState: 1, theme: "dark" });
+		expect(storedPayload(storage, TEST_NAMESPACE, id)).toEqual({
+			__ismState: 1,
+			theme: "dark",
+		});
+	});
+
+	it("does not mistake legacy-envelope-shaped user state with extra fields for an envelope", () => {
+		const storage = new MemoryStorageAdapter();
+		const id = "settings/LegacyEnvelopeCollision";
+		const key = storageKey(TEST_NAMESPACE, id);
+		const rawState = {
+			__ismState: 1 as const,
+			version: 1,
+			value: { nested: true },
+			theme: "dark",
+		};
+		storage.values.set(key, rawState);
+		useStorageRuntime(storage);
+
+		const state = runtime.getState(id, { theme: "light" }, true);
+
+		expect(state).toEqual(rawState);
+		expect(storedPayload(storage, TEST_NAMESPACE, id)).toEqual(rawState);
+	});
+
 	it("writes persistent setState updates through to the adapter", () => {
 		const storage = new MemoryStorageAdapter();
 		useStorageRuntime(storage);
@@ -268,6 +395,27 @@ describe("storage adapter persistence", () => {
 		expect(storage.values.has(storageKey("app-b", id))).toBe(true);
 	});
 
+	it("migrates the v4 persistence envelope to the collision-resistant format", () => {
+		const storage = new MemoryStorageAdapter();
+		const id = "settings/LegacyV4Envelope";
+		const key = storageKey("legacy-v4", id);
+		storage.values.set(key, {
+			__ismState: 1,
+			version: 1,
+			value: { count: 7 },
+		});
+		useStorageRuntime(storage, "legacy-v4");
+
+		expect(runtime.getState(id, { count: 0 }, true)).toEqual({ count: 7 });
+		const record = storage.values.get(key) as Record<string, unknown>;
+		expect(record).toEqual({
+			__ismPersistence: "@ispoofermotion/core:persisted-state",
+			formatVersion: 2,
+			stateVersion: 1,
+			payload: { count: 7 },
+		});
+	});
+
 	it("migrates versioned stored state and rewrites it at the current version", () => {
 		const storage = new MemoryStorageAdapter();
 		const id = "settings/Versioned";
@@ -297,11 +445,17 @@ describe("storage adapter persistence", () => {
 
 		expect(migrated).toEqual({ count: 3, label: "1->2" });
 		const record = storage.values.get(storageKey("migration", id)) as {
-			version: number;
-			value: unknown;
+			__ismPersistence: string;
+			formatVersion: number;
+			stateVersion: number;
+			payload: unknown;
 		};
-		expect(record.version).toBe(2);
-		expect(record.value).toEqual(migrated);
+		expect(record.__ismPersistence).toBe(
+			"@ispoofermotion/core:persisted-state",
+		);
+		expect(record.formatVersion).toBe(2);
+		expect(record.stateVersion).toBe(2);
+		expect(record.payload).toEqual(migrated);
 	});
 
 	it("rejects malformed runtime storage envelopes", () => {
@@ -362,6 +516,29 @@ describe("storage adapter persistence", () => {
 		useStorageRuntime(storage, "serialization");
 		expect(runtime.getState(id, { count: 0 }, persistence)).toEqual({
 			count: 8,
+		});
+	});
+
+	it("isolates live state from mutating persistence serializers", () => {
+		const storage = new MemoryStorageAdapter();
+		const id = "settings/MutatingSerializer";
+		const persistence = {
+			storageVersion: 1,
+			serialize: (value: unknown) => {
+				const state = value as { nested: { count: number } };
+				state.nested.count = 99;
+				return state;
+			},
+		};
+		useStorageRuntime(storage, "serializer-isolation");
+		runtime.getState(id, { nested: { count: 1 } }, persistence);
+		runtime.setState(id, { nested: { count: 8 } }, persistence);
+
+		expect(runtime.getState(id, { nested: { count: 0 } }, persistence)).toEqual(
+			{ nested: { count: 8 } },
+		);
+		expect(storedPayload(storage, "serializer-isolation", id)).toEqual({
+			nested: { count: 99 },
 		});
 	});
 

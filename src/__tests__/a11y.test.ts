@@ -62,6 +62,45 @@ describe("makeInteractive", () => {
 		expect(prevented).toBe(2);
 	});
 
+	it("clears pending Space activation if the control becomes disabled before keyup", () => {
+		let called = 0;
+		const targetElement = document.createElement("button");
+		const enabledProps = makeInteractive(() => {
+			called++;
+		});
+		enabledProps.onKeyDown(
+			keyboardEvent(" ", {
+				currentTarget: targetElement,
+				preventDefault: () => {},
+			}),
+		);
+
+		const disabledProps = makeInteractive(
+			() => {
+				called++;
+			},
+			{ disabled: true },
+		);
+		disabledProps.onKeyUp(
+			keyboardEvent(" ", {
+				currentTarget: targetElement,
+				preventDefault: () => {},
+			}),
+		);
+		expect(called).toBe(0);
+
+		const rerenderedEnabledProps = makeInteractive(() => {
+			called++;
+		});
+		rerenderedEnabledProps.onKeyUp(
+			keyboardEvent(" ", {
+				currentTarget: targetElement,
+				preventDefault: () => {},
+			}),
+		);
+		expect(called).toBe(0);
+	});
+
 	it("activates on Space keyup even when component rerenders between keydown and keyup", () => {
 		let called = 0;
 		const targetElement = document.createElement("button");

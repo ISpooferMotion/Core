@@ -1,4 +1,10 @@
+import type * as React from "react";
 import * as errors from "./errors";
+import {
+	assertStructuredState,
+	cloneStructuredState,
+	structuredStateEqual,
+} from "./stateValue";
 import type {
 	FrameEntry,
 	PersistentStateOptions,
@@ -62,14 +68,45 @@ interface PendingStorageDelete {
 
 type PendingStorageMutation = PendingStorageSet | PendingStorageDelete;
 
+interface StateReadView {
+	baseline: unknown;
+	value: unknown;
+}
+
 interface FrameTransaction {
 	id: number;
 	snapshot: FrameTransactionSnapshot;
 	pendingStorageMutations: Map<string, PendingStorageMutation>;
+	stateReadViews: Map<string, StateReadView[]>;
 	prepared: boolean;
 }
 
+const PERSISTED_STATE_MARKER = "@ispoofermotion/core:persisted-state";
+const PERSISTED_STATE_FORMAT_VERSION = 2;
+const PERSISTED_STATE_KEYS = [
+	"__ismPersistence",
+	"formatVersion",
+	"stateVersion",
+	"payload",
+] as const;
+const LEGACY_PERSISTED_STATE_KEYS = ["__ismState", "version", "value"] as const;
+
+function hasExactOwnKeys(value: object, keys: readonly string[]): boolean {
+	const ownKeys = Reflect.ownKeys(value);
+	return (
+		ownKeys.length === keys.length &&
+		keys.every((key) => Object.hasOwn(value, key))
+	);
+}
+
 interface PersistedStateRecord {
+	__ismPersistence: typeof PERSISTED_STATE_MARKER;
+	formatVersion: typeof PERSISTED_STATE_FORMAT_VERSION;
+	stateVersion: number;
+	payload: unknown;
+}
+
+interface LegacyPersistedStateRecord {
 	__ismState: 1;
 	version: number;
 	value: unknown;
@@ -89,6 +126,26 @@ type StorageReadResult<S> =
 export interface MemoIdentity {
 	cacheKey: string;
 	idSegment: string;
+}
+
+const REACT_CONTEXT_PENDING = Symbol("ism.react-context-pending");
+
+export class ReactContextPendingError extends Error {
+	readonly marker = REACT_CONTEXT_PENDING;
+
+	constructor(readonly context: React.Context<unknown>) {
+		super("[ism] React context value is not available yet.");
+		this.name = "ReactContextPendingError";
+	}
+}
+
+export function isReactContextPendingError(
+	error: unknown,
+): error is ReactContextPendingError {
+	return (
+		error instanceof ReactContextPendingError &&
+		error.marker === REACT_CONTEXT_PENDING
+	);
 }
 
 function encodeIdSegment(value: string): string {
@@ -120,32 +177,6 @@ function mapsOfArraysEqual(
 		if (!rightValues || !arraysEqual(leftValues, rightValues)) return false;
 	}
 	return true;
-}
-
-function shallowStateEqual(left: unknown, right: unknown): boolean {
-	if (Object.is(left, right)) return true;
-	if (Array.isArray(left) && Array.isArray(right)) {
-		return arraysEqual(left, right);
-	}
-	if (
-		left !== null &&
-		right !== null &&
-		typeof left === "object" &&
-		typeof right === "object" &&
-		Object.getPrototypeOf(left) === Object.prototype &&
-		Object.getPrototypeOf(right) === Object.prototype
-	) {
-		const leftRecord = left as Record<string, unknown>;
-		const rightRecord = right as Record<string, unknown>;
-		const leftKeys = Object.keys(leftRecord);
-		if (leftKeys.length !== Object.keys(rightRecord).length) return false;
-		return leftKeys.every(
-			(key) =>
-				Object.hasOwn(rightRecord, key) &&
-				Object.is(leftRecord[key], rightRecord[key]),
-		);
-	}
-	return false;
 }
 
 function restoreMap<K, V>(target: Map<K, V>, source: Map<K, V>): void {
@@ -291,6 +322,13 @@ export class Runtime {
 	private lastInspectedTreeEpoch = -1;
 	private inspectorSubscribers = 0;
 	private lastTreeFingerprint = "";
+	private readonly requestedReactContexts = new Set<React.Context<unknown>>();
+	private readonly reactContextValues = new Map<
+		React.Context<unknown>,
+		unknown
+	>();
+	private readonly reactContextIds = new Map<React.Context<unknown>, number>();
+	private nextReactContextId = 1;
 
 	constructor(
 		storage?: StorageAdapter,
@@ -389,6 +427,10 @@ export class Runtime {
 		this.stateRevision++;
 		this.lastInspectedTreeEpoch = -1;
 		this.lastTreeFingerprint = "";
+		this.requestedReactContexts.clear();
+		this.reactContextValues.clear();
+		this.reactContextIds.clear();
+		this.nextReactContextId = 1;
 	}
 
 	isAppMounted(): boolean {
@@ -401,6 +443,47 @@ export class Runtime {
 
 	getStorageNamespace(): string | null {
 		return this.storageNamespace;
+	}
+
+	requestReactContext<T>(context: React.Context<T>): number {
+		const opaqueContext = context as React.Context<unknown>;
+		this.requestedReactContexts.add(opaqueContext);
+		const existingId = this.reactContextIds.get(opaqueContext);
+		if (existingId !== undefined) return existingId;
+		const id = this.nextReactContextId++;
+		this.reactContextIds.set(opaqueContext, id);
+		return id;
+	}
+
+	getRequestedReactContexts(): readonly React.Context<unknown>[] {
+		return Array.from(this.requestedReactContexts);
+	}
+
+	getReactContextId(context: React.Context<unknown>): number {
+		return this.requestReactContext(context);
+	}
+
+	setReactContextValue<T>(context: React.Context<T>, value: T): boolean {
+		const opaqueContext = context as React.Context<unknown>;
+		this.requestReactContext(opaqueContext);
+		const hadValue = this.reactContextValues.has(opaqueContext);
+		const previous = this.reactContextValues.get(opaqueContext);
+		if (hadValue && Object.is(previous, value)) return false;
+		this.reactContextValues.set(opaqueContext, value);
+		return true;
+	}
+
+	readReactContext<T>(context: React.Context<T>): T {
+		const opaqueContext = context as React.Context<unknown>;
+		this.requestReactContext(opaqueContext);
+		if (!this.reactContextValues.has(opaqueContext)) {
+			throw new ReactContextPendingError(opaqueContext);
+		}
+		return this.reactContextValues.get(opaqueContext) as T;
+	}
+
+	consumeDirtySignal(): void {
+		this.dirty = false;
 	}
 
 	getDomId(kind: string, id: string): string {
@@ -434,6 +517,7 @@ export class Runtime {
 			pendingStorageMutations: carriedOverStorageMutations
 				? new Map(carriedOverStorageMutations)
 				: new Map(),
+			stateReadViews: new Map(),
 			prepared: false,
 		};
 
@@ -458,6 +542,8 @@ export class Runtime {
 	prepareFrame(transactionId?: number): void {
 		const transaction = this.requireFrameTransaction(transactionId);
 		if (transaction.prepared) return;
+
+		this.assertNoStateReadMutations();
 
 		if (this.scopeStack.length > 0) {
 			const scopes = this.scopeStack.map((scope) => scope.label);
@@ -579,6 +665,78 @@ export class Runtime {
 		return this.frameRoot;
 	}
 
+	private cloneStateForRuntime<T>(id: string, value: T, context: string): T {
+		try {
+			return cloneStructuredState(value, context);
+		} catch (error) {
+			throw errors.createISMError(
+				"ISM_INVALID_STATE_UPDATE",
+				errors.invalidStateUpdate(id, errors.getErrorMessage(error)),
+				{ cause: error, details: { id, context } },
+			);
+		}
+	}
+
+	private readStateForCaller<S>(id: string): S {
+		const current = this.stateStore.get(id);
+		const transaction = this.frameTransaction;
+		if (!transaction) {
+			return this.cloneStateForRuntime(id, current, "state read") as S;
+		}
+
+		let views = transaction.stateReadViews.get(id);
+		if (!views) {
+			views = [];
+			transaction.stateReadViews.set(id, views);
+		}
+		const latest = views.at(-1);
+		if (latest && Object.is(latest.baseline, current)) {
+			this.assertStateReadViewNotMutated(id, latest);
+			return latest.value as S;
+		}
+
+		const value = this.cloneStateForRuntime(id, current, "state read");
+		views.push({ baseline: current, value });
+		return value as S;
+	}
+
+	private assertStateReadViewNotMutated(id: string, view: StateReadView): void {
+		try {
+			assertStructuredState(view.value, "state read");
+		} catch (error) {
+			throw errors.createISMError(
+				"ISM_STATE_MUTATION",
+				errors.stateMutation(id),
+				{
+					cause: error,
+					details: { id },
+				},
+			);
+		}
+		if (structuredStateEqual(view.value, view.baseline)) return;
+		throw errors.createISMError(
+			"ISM_STATE_MUTATION",
+			errors.stateMutation(id),
+			{
+				details: { id },
+			},
+		);
+	}
+
+	private assertStateReadViewsNotMutated(id: string): void {
+		const views = this.frameTransaction?.stateReadViews.get(id);
+		if (!views) return;
+		for (const view of views) this.assertStateReadViewNotMutated(id, view);
+	}
+
+	private assertNoStateReadMutations(): void {
+		const transaction = this.frameTransaction;
+		if (!transaction) return;
+		for (const [id, views] of transaction.stateReadViews) {
+			for (const view of views) this.assertStateReadViewNotMutated(id, view);
+		}
+	}
+
 	getState<S>(
 		id: string,
 		defaultState: S,
@@ -589,7 +747,7 @@ export class Runtime {
 		if (!this.stateStore.has(id)) {
 			let initialState: S;
 			try {
-				initialState = structuredClone(defaultState);
+				initialState = cloneStructuredState(defaultState, "defaultState");
 			} catch (error) {
 				throw errors.createISMError(
 					"ISM_DEFAULT_STATE_CLONE_FAILURE",
@@ -598,7 +756,10 @@ export class Runtime {
 				);
 			}
 
-			this.stateDefaults.set(id, structuredClone(initialState));
+			this.stateDefaults.set(
+				id,
+				this.cloneStateForRuntime(id, initialState, "defaultState"),
+			);
 			if (persistence) {
 				this.persistenceById.set(id, persistence);
 
@@ -625,7 +786,7 @@ export class Runtime {
 		}
 
 		this.stateLastSeenFrame.set(id, this.frameGeneration);
-		return this.stateStore.get(id) as S;
+		return this.readStateForCaller<S>(id);
 	}
 
 	setState(
@@ -634,12 +795,17 @@ export class Runtime {
 		persistent: PersistenceRequest<unknown> = false,
 	): void {
 		if (!this.stateStore.has(id)) return;
+		this.assertStateReadViewsNotMutated(id);
 		const current = this.stateStore.get(id);
-		const next =
+
+		const nextCandidate =
 			typeof updater === "function"
-				? (updater as (previous: unknown) => unknown)(current)
+				? (updater as (previous: unknown) => unknown)(
+						this.cloneStateForRuntime(id, current, "state updater input"),
+					)
 				: updater;
-		if (Object.is(current, next)) return;
+		const next = this.cloneStateForRuntime(id, nextCandidate, "state update");
+		if (structuredStateEqual(current, next)) return;
 		this.stateStore.set(id, next);
 		this.stateRevision++;
 
@@ -652,13 +818,31 @@ export class Runtime {
 
 	consumeState(
 		id: string,
-		currentState: unknown,
+		_currentState: unknown,
 		consumer: (state: unknown) => unknown,
 		persistent: PersistenceRequest<unknown> = false,
 	): void {
 		if (!this.stateStore.has(id)) return;
-		const next = consumer(currentState);
-		if (shallowStateEqual(currentState, next)) return;
+		this.assertStateReadViewsNotMutated(id);
+		const current = this.stateStore.get(id);
+		const consumerInput = this.cloneStateForRuntime(
+			id,
+			current,
+			"state consumer input",
+		);
+		const nextCandidate = consumer(consumerInput);
+		if (
+			Object.is(consumerInput, nextCandidate) &&
+			structuredStateEqual(current, nextCandidate)
+		) {
+			return;
+		}
+		const next = this.cloneStateForRuntime(
+			id,
+			nextCandidate,
+			"state consumer result",
+		);
+		if (structuredStateEqual(current, next)) return;
 		this.stateStore.set(id, next);
 		this.stateRevision++;
 
@@ -668,10 +852,11 @@ export class Runtime {
 
 	resetState(id: string): boolean {
 		if (!this.stateDefaults.has(id) || !this.stateStore.has(id)) return false;
+		this.assertStateReadViewsNotMutated(id);
 
 		let next: unknown;
 		try {
-			next = structuredClone(this.stateDefaults.get(id));
+			next = cloneStructuredState(this.stateDefaults.get(id), "defaultState");
 		} catch (error) {
 			throw errors.createISMError(
 				"ISM_DEFAULT_STATE_CLONE_FAILURE",
@@ -1024,7 +1209,12 @@ export class Runtime {
 	}
 
 	getStateStore(): Map<string, unknown> {
-		return this.stateStore;
+		return new Map(
+			Array.from(this.stateStore, ([id, value]) => [
+				id,
+				this.cloneStateForRuntime(id, value, "state inspection"),
+			]),
+		);
 	}
 
 	getInspectionRevision(kind: "tree" | "state"): number {
@@ -1197,18 +1387,20 @@ export class Runtime {
 		let value = raw;
 		let normalize = true;
 
-		if (this.hasPersistedStateTag(raw)) {
-			if (!this.isPersistedStateRecord(raw)) {
-				this.reportStorageFailure(
-					"validate",
-					key,
-					new Error("Stored state envelope is malformed."),
-				);
-				return { status: "invalid" };
-			}
+		if (this.isPersistedStateRecord(raw)) {
+			storedVersion = raw.stateVersion;
+			value = raw.payload;
+			normalize = false;
+		} else if (this.isLegacyPersistedStateRecord(raw)) {
 			storedVersion = raw.version;
 			value = raw.value;
-			normalize = false;
+		} else if (this.looksLikePersistenceEnvelope(raw)) {
+			this.reportStorageFailure(
+				"validate",
+				key,
+				new Error("Stored state persistence envelope is malformed."),
+			);
+			return { status: "invalid" };
 		}
 
 		if (persistence.deserialize) {
@@ -1267,7 +1459,7 @@ export class Runtime {
 		try {
 			return {
 				status: "found",
-				value: structuredClone(value) as S,
+				value: cloneStructuredState(value, "storedState") as S,
 				normalize,
 			};
 		} catch (error) {
@@ -1327,7 +1519,17 @@ export class Runtime {
 			}
 		}
 
-		let payload = mutation.value;
+		let payload: unknown;
+		try {
+			payload = cloneStructuredState(
+				mutation.value,
+				"state persistence snapshot",
+			);
+		} catch (error) {
+			this.reportStorageFailure("serialize", key, error);
+			return false;
+		}
+
 		if (mutation.persistence.serialize) {
 			try {
 				payload = mutation.persistence.serialize(payload);
@@ -1338,9 +1540,10 @@ export class Runtime {
 		}
 
 		const record: PersistedStateRecord = {
-			__ismState: 1,
-			version: mutation.persistence.storageVersion ?? 1,
-			value: payload,
+			__ismPersistence: PERSISTED_STATE_MARKER,
+			formatVersion: PERSISTED_STATE_FORMAT_VERSION,
+			stateVersion: mutation.persistence.storageVersion ?? 1,
+			payload,
 		};
 
 		try {
@@ -1352,24 +1555,40 @@ export class Runtime {
 		}
 	}
 
-	private hasPersistedStateTag(value: unknown): boolean {
-		return (
-			value !== null &&
-			typeof value === "object" &&
-			(value as { __ismState?: unknown }).__ismState === 1
-		);
-	}
-
 	private isPersistedStateRecord(
 		value: unknown,
 	): value is PersistedStateRecord {
 		if (value === null || typeof value !== "object") return false;
+		if (!hasExactOwnKeys(value, PERSISTED_STATE_KEYS)) return false;
 		const record = value as Partial<PersistedStateRecord>;
+		return (
+			record.__ismPersistence === PERSISTED_STATE_MARKER &&
+			record.formatVersion === PERSISTED_STATE_FORMAT_VERSION &&
+			Number.isSafeInteger(record.stateVersion) &&
+			(record.stateVersion ?? 0) >= 1
+		);
+	}
+
+	private isLegacyPersistedStateRecord(
+		value: unknown,
+	): value is LegacyPersistedStateRecord {
+		if (value === null || typeof value !== "object") return false;
+		if (!hasExactOwnKeys(value, LEGACY_PERSISTED_STATE_KEYS)) return false;
+		const record = value as Partial<LegacyPersistedStateRecord>;
 		return (
 			record.__ismState === 1 &&
 			Number.isSafeInteger(record.version) &&
-			(record.version ?? 0) >= 1 &&
-			Object.hasOwn(record, "value")
+			(record.version ?? 0) >= 1
+		);
+	}
+
+	private looksLikePersistenceEnvelope(value: unknown): boolean {
+		if (value === null || typeof value !== "object") return false;
+		const record = value as Record<string, unknown>;
+		if (record.__ismPersistence === PERSISTED_STATE_MARKER) return true;
+		return (
+			record.__ismState === 1 &&
+			hasExactOwnKeys(value, LEGACY_PERSISTED_STATE_KEYS)
 		);
 	}
 

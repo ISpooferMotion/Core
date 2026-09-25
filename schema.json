@@ -6,7 +6,7 @@
 			"type": "string",
 			"format": "uri",
 			"description": "Schema URL used by editors for validation and autocomplete.",
-			"examples": ["https://unpkg.com/@ispoofermotion/core@4.2.0/schema.json"]
+			"examples": ["https://unpkg.com/@ispoofermotion/core@4.3.0/schema.json"]
 		},
 		"layerZIndex": {
 			"type": "number",

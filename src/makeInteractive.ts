@@ -52,14 +52,17 @@ export function makeInteractive(
 	};
 
 	const handleKeyUp = (event: ReactKeyboardEvent) => {
+		if (event.key !== " ") return;
 		const targetPressed = event.currentTarget
 			? spacePressedTargets.has(event.currentTarget)
 			: false;
-		if (disabled || event.key !== " " || (!spacePressed && !targetPressed))
-			return;
-		event.preventDefault();
+		if (!spacePressed && !targetPressed) return;
+
 		spacePressed = false;
 		if (event.currentTarget) spacePressedTargets.delete(event.currentTarget);
+		if (disabled) return;
+
+		event.preventDefault();
 		onClick();
 	};
 

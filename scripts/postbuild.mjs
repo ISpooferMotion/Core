@@ -8,10 +8,7 @@ import {
 import { join } from "node:path";
 
 await mkdir("dist", { recursive: true });
-await Promise.all([
-	copyFile("src/styles.css", "dist/styles.css"),
-	copyFile("schema.json", "dist/schema.json"),
-]);
+await copyFile("src/styles.css", "dist/styles.css");
 
 const declarationFiles = await findDeclarationFiles("dist");
 await Promise.all(declarationFiles.map(normalizeDeclarations));

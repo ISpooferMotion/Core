@@ -1,7 +1,7 @@
 # Core Library AI Knowledge Base & Integration Manual
 
 > **Package:** `@ispoofermotion/core`
-> **Version:** `4.2.0`
+> **Version:** `4.3.0`
 > **Target Environment:** Node.js `>=22`, React `>=18 <20`, Modern Browsers, Tauri, Vite, Next.js / Bundlers
 > **Module Types:** Dual ESM (`dist/index.js`) and CommonJS (`dist/index.cjs`) with complete TypeScript declarations (`dist/index.d.ts`, `dist/index.d.cts`)
 

@@ -235,10 +235,14 @@ describe("ErrorFallback", () => {
 		});
 
 		expect(container.innerHTML).toBe("");
-		expect(consoleError).toHaveBeenCalledWith(
-			expect.stringContaining("Core could not render the current widget tree."),
-			expect.any(Error),
-			expect.any(String),
+		const redactedCall = consoleError.mock.calls.find(([message]) =>
+			String(message).includes(
+				"Core could not render the current widget tree.",
+			),
+		);
+		expect(redactedCall).toHaveLength(1);
+		expect(JSON.stringify(consoleError.mock.calls)).not.toContain(
+			"secret filesystem path",
 		);
 		consoleError.mockRestore();
 	});

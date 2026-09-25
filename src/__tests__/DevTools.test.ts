@@ -1,12 +1,13 @@
 import { act, createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../createApp";
+import { DevToolsOverlay } from "../DevTools";
 import { defineWidget } from "../defineWidget";
 import {
 	DEVTOOLS_PROTOCOL_SYMBOL,
 	getDevToolsProtocol,
 } from "../devtoolsProtocol";
-import { mountedRuntimes } from "../runtime";
+import { mountedRuntimes, Runtime } from "../runtime";
 import {
 	cleanupTestRoots,
 	createTestRoot,
@@ -75,6 +76,43 @@ describe("DevTools", () => {
 		await waitForCondition(() => getDevToolsProtocol() !== undefined);
 		expect(getDevToolsProtocol()).toBeDefined();
 	});
+	it("mounts through the public runtimeId contract without exposing Runtime as a prop", async () => {
+		const runtime = new Runtime();
+		runtime.registerApp(() => {});
+		runtime.beginFrame();
+		runtime.getState("Counter/main", { count: 1 });
+		runtime.endFrame();
+
+		const root = createTestRoot(container);
+		await act(async () => {
+			root.render(
+				createElement(DevToolsOverlay, { runtimeId: runtime.getInstanceId() }),
+			);
+		});
+		expect(
+			container.querySelector('[aria-label="Open DevTools"]'),
+		).not.toBeNull();
+		await click(container.querySelector('[aria-label="Open DevTools"]'));
+		const stateTab = Array.from(
+			container.querySelectorAll('[role="tab"]'),
+		).find((element) => element.textContent === "State");
+		await click(stateTab ?? null);
+		expect(container.textContent).toContain("Counter/main");
+
+		act(() => root.unmount());
+		runtime.unregisterApp();
+	});
+
+	it("renders nothing when a public runtimeId is no longer mounted", async () => {
+		const root = createTestRoot(container);
+		await act(async () => {
+			root.render(
+				createElement(DevToolsOverlay, { runtimeId: "missing-runtime" }),
+			);
+		});
+		expect(container.childElementCount).toBe(0);
+	});
+
 	it("renders collapsed by default, showing only the open button", async () => {
 		const App = createApp(
 			() => {

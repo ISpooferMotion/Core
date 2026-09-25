@@ -47,6 +47,7 @@ import {
 	getActiveRuntimeOrNull,
 	getRuntimeForId,
 	mountedRuntimes,
+	type Runtime,
 } from "./runtime";
 import type { FrameEntry } from "./types";
 
@@ -242,6 +243,12 @@ export function setFocus(id: string | null): void {
 
 	if (id === null) {
 		for (const runtime of mountedRuntimes) runtime.setFocus(null);
+		return;
+	}
+
+	if (mountedRuntimes.size === 1) {
+		const runtime = mountedRuntimes.values().next().value as Runtime;
+		runtime.setFocus(id);
 	}
 }
 
@@ -268,8 +275,23 @@ export function isFocused(id: string): boolean {
 }
 
 export function getFocusedId(): string | null {
-	const runtime = getActiveRuntime();
-	return runtime.getFocusedId();
+	const active = getActiveRuntimeOrNull();
+	if (active) return active.getFocusedId();
+
+	let focused: string | null = null;
+	for (const runtime of mountedRuntimes) {
+		const candidate = runtime.getFocusedId();
+		if (candidate === null) continue;
+		if (focused !== null && focused !== candidate) {
+			throw errors.createISMError(
+				"ISM_CROSS_RUNTIME_ID_COLLISION",
+				"[ism] Multiple mounted apps have different focused widgets; use the createApp handle to query one app explicitly.",
+				{ details: { firstFocused: focused, secondFocused: candidate } },
+			);
+		}
+		focused = candidate;
+	}
+	return focused;
 }
 
 export function end(): void {

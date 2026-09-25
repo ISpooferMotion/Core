@@ -5,7 +5,7 @@ import {
 	serializeInspectorState,
 	serializeInspectorTree,
 } from "./inspectorSerializer";
-import type { Runtime } from "./runtime";
+import { getRuntimeByInstanceId, type Runtime } from "./runtime";
 
 type Tab = "Elements" | "State";
 const TABS: readonly Tab[] = ["Elements", "State"];
@@ -94,22 +94,23 @@ function CloseIcon(): ReactNode {
 }
 
 export interface DevToolsOverlayProps {
-	runtime: Runtime;
-	zIndex: number;
+	runtimeId: string;
+	zIndex?: number;
 }
 
 export function DevToolsOverlay({
-	runtime,
-	zIndex,
-}: DevToolsOverlayProps): ReturnType<typeof createElement> {
+	runtimeId,
+	zIndex = 101,
+}: DevToolsOverlayProps): ReactNode {
+	const runtime = getRuntimeByInstanceId(runtimeId);
 	const [expanded, setExpanded] = useState(false);
 	const [activeTab, setActiveTab] = useState<Tab>("Elements");
 	const openButtonRef = useRef<HTMLButtonElement | null>(null);
 	const restoreOpenerFocus = useRef(false);
-	const runtimeId = runtime.getInstanceId();
 	const panelId = `${runtimeId}-devtools-panel`;
 	const tabId = (tab: Tab) => `${runtimeId}-devtools-tab-${tab}`;
-	const inspectorText = expanded ? getInspectorText(runtime, activeTab) : "";
+	const inspectorText =
+		expanded && runtime ? getInspectorText(runtime, activeTab) : "";
 
 	useEffect(() => {
 		installDevToolsProtocol();
@@ -123,9 +124,11 @@ export function DevToolsOverlay({
 	}, [expanded]);
 
 	useEffect(() => {
-		if (!expanded) return;
+		if (!expanded || !runtime) return;
 		return runtime.attachInspector();
 	}, [expanded, runtime]);
+
+	if (!runtime) return null;
 
 	const close = () => {
 		restoreOpenerFocus.current = true;
@@ -140,7 +143,7 @@ export function DevToolsOverlay({
 				type: "button" as const,
 				"aria-label": "Open DevTools",
 				onClick: () => setExpanded(true),
-				className: "ism-devtools-button",
+				className: "ism-devtools-button ism-devtools-trigger",
 				style: {
 					position: "fixed",
 					bottom: "10px",
@@ -148,7 +151,6 @@ export function DevToolsOverlay({
 					display: "inline-flex",
 					alignItems: "center",
 					gap: "6px",
-					backgroundColor: "#0a0a0a",
 					color: "#ededed",
 					fontSize: "11px",
 					fontFamily:
@@ -156,7 +158,6 @@ export function DevToolsOverlay({
 					fontWeight: 500,
 					padding: "6px 9px",
 					borderRadius: "7px",
-					border: "1px solid #2e2e2e",
 					zIndex,
 					cursor: "pointer",
 					boxShadow: "0 8px 24px rgba(0, 0, 0, 0.28)",
@@ -225,7 +226,6 @@ export function DevToolsOverlay({
 					display: "flex",
 					justifyContent: "space-between",
 					alignItems: "center",
-					backgroundColor: "#0a0a0a",
 					borderBottom: "1px solid #242424",
 					padding: "0 8px",
 					minHeight: "34px",
@@ -254,10 +254,8 @@ export function DevToolsOverlay({
 								handleTabKeyDown(event, tab),
 							className: "ism-devtools-tab",
 							style: {
-								color: activeTab === tab ? "#ededed" : "#8f8f8f",
 								padding: "7px 10px 6px",
 								cursor: "pointer",
-								backgroundColor: "transparent",
 								border: "none",
 								borderBottom:
 									activeTab === tab
@@ -284,8 +282,6 @@ export function DevToolsOverlay({
 						width: "26px",
 						height: "26px",
 						color: "#a1a1a1",
-						backgroundColor: "transparent",
-						border: "1px solid transparent",
 						borderRadius: "6px",
 						cursor: "pointer",
 						padding: 0,
